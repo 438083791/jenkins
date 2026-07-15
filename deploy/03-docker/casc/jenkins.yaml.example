@@ -1,0 +1,8 @@
+jenkins:
+  systemMessage: "Jenkins (scheme 03 docker compose) — edit deploy/03-docker/casc to customize"
+  numExecutors: 2
+  mode: NORMAL
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"

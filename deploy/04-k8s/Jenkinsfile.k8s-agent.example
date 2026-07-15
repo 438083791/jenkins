@@ -1,0 +1,27 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: jnlp
+    image: jenkins/inbound-agent:latest-jdk17
+  - name: maven
+    image: maven:3.9-eclipse-temurin-17
+    command: ['cat']
+    tty: true
+"""
+    }
+  }
+  stages {
+    stage('Build') {
+      steps {
+        container('maven') {
+          sh 'mvn -v'
+        }
+      }
+    }
+  }
+}

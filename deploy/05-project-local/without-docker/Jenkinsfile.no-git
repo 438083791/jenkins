@@ -1,0 +1,168 @@
+#!groovy
+/**
+ * 无 Docker + 无 Git：代码在本机目录（默认 /jenkins/deploy/web-test）
+ *
+ * 重要：不要直接在源码目录里 dir() 跑 sh——Jenkins 会创建 源目录@tmp，
+ * 若 jenkins 用户对父目录无写权限会 AccessDeniedException。
+ * 本脚本先把工程拷到 JOB 工作区再构建。
+ */
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+  tools {
+    jdk 'jdk8'
+    maven 'maven3'
+  }
+  parameters {
+    string(name: 'WEB_TEST_DIR', defaultValue: '/jenkins/web-test', description: '本机 web-test 源码目录（只读即可）')
+    string(name: 'DEPLOY_SCRIPT', defaultValue: '/jenkins/deploy/05-project-local/without-docker/remote/deploy-via-ssh.sh', description: 'deploy-via-ssh.sh 路径；你机器若在 /jenkins/deploy/deploy/... 请改参数')
+    booleanParam(name: 'DEPLOY_TO_REMOTE', defaultValue: false, description: '是否 SSH 部署')
+    string(name: 'DEPLOY_HOST', defaultValue: '192.168.122.129')
+    string(name: 'DEPLOY_USER', defaultValue: 'deploy', description: 'SSH 部署用户')
+    string(name: 'APP_RUN_USER', defaultValue: 'deploy', description: '目标机 systemd 运行用户（User=），须与服务一致')
+    string(name: 'DEPLOY_SSH_PORT', defaultValue: '22')
+    string(name: 'DEPLOY_PATH', defaultValue: '/opt/web-test')
+    string(name: 'APP_HTTP_PORT', defaultValue: '8088')
+    string(name: 'SSH_CREDENTIALS_ID', defaultValue: 'web-test-deploy-ssh')
+    string(name: 'MAVEN_SETTINGS', defaultValue: '/jenkins/deploy/05-project-local/without-docker/maven-settings.xml', description: 'Maven 镜像 settings；路径按你机器实际位置改')
+  }
+  stages {
+    stage('Prepare') {
+      steps {
+        sh """
+          set -e
+          test -f '${params.WEB_TEST_DIR}/pom.xml'
+          test -r '${params.DEPLOY_SCRIPT}' || echo "WARN: deploy script not readable: ${params.DEPLOY_SCRIPT}"
+          if [ -n '${params.MAVEN_SETTINGS}' ]; then
+            test -r '${params.MAVEN_SETTINGS}' || echo "WARN: maven settings missing: ${params.MAVEN_SETTINGS}"
+          fi
+          java -version
+          mvn -version || true
+          id
+        """
+      }
+    }
+    stage('Sync to workspace') {
+      steps {
+        sh """
+          set -e
+          rm -rf "\${WORKSPACE}/web-test"
+          cp -a '${params.WEB_TEST_DIR}' "\${WORKSPACE}/web-test"
+          chmod -R u+w "\${WORKSPACE}/web-test"
+          ls -la "\${WORKSPACE}/web-test"
+        """
+      }
+    }
+    stage('Test & Package') {
+      steps {
+        dir('web-test') {
+          sh """
+            set -e
+            MVN_OPTS=''
+            if [ -n '${params.MAVEN_SETTINGS}' ] && [ -r '${params.MAVEN_SETTINGS}' ]; then
+              MVN_OPTS="-s ${params.MAVEN_SETTINGS}"
+            fi
+            # 网络偶发 transfer failed：重试 + wagon/aether 重试次数
+            export MAVEN_OPTS="\${MAVEN_OPTS:-} -Daether.connector.http.retryHandler.count=5 -Dmaven.wagon.http.retryHandler.count=5"
+            run_mvn() {
+              if command -v mvn >/dev/null 2>&1; then
+                mvn \$MVN_OPTS -B -U clean package
+              elif [ -x ./mvnw ]; then
+                ./mvnw \$MVN_OPTS -B -U clean package
+              else
+                echo "mvn/mvnw not found" >&2
+                return 127
+              fi
+            }
+            ok=0
+            for attempt in 1 2 3; do
+              echo "==== mvn clean package (attempt \$attempt/3) ===="
+              if run_mvn; then
+                ok=1
+                break
+              fi
+              echo "WARN: mvn failed on attempt \$attempt, retry in 8s..." >&2
+              sleep 8
+            done
+            test "\$ok" = 1
+          """
+        }
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'web-test/target/surefire-reports/*.xml'
+          archiveArtifacts artifacts: 'web-test/target/web-test-*.jar', fingerprint: true, allowEmptyArchive: true
+        }
+      }
+    }
+    stage('Smoke jar (local)') {
+      steps {
+        dir('web-test') {
+          sh '''
+            JAR=$(ls target/web-test-*.jar | grep -v original | head -n1)
+            echo "jar=$JAR"
+            java -jar "$JAR" --server.port=18080 > /tmp/web-test-ci.log 2>&1 &
+            PID=$!
+            trap "kill $PID 2>/dev/null || true" EXIT
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:18080/hello | grep -q hello; then
+                echo smoke ok
+                exit 0
+              fi
+              sleep 2
+            done
+            echo smoke failed >&2
+            cat /tmp/web-test-ci.log || true
+            exit 1
+          '''
+        }
+      }
+    }
+    stage('Deploy remote (SSH)') {
+      when {
+        expression { return params.DEPLOY_TO_REMOTE }
+      }
+      steps {
+        script {
+          if (!params.DEPLOY_HOST?.trim()) {
+            error 'DEPLOY_TO_REMOTE=true 时必须填写 DEPLOY_HOST'
+          }
+        }
+        dir('web-test') {
+          sh '''
+            JAR=$(ls target/web-test-*.jar | grep -v original | head -n1)
+            cp -f "$JAR" /tmp/web-test-deploy.jar
+            ls -lh /tmp/web-test-deploy.jar
+          '''
+        }
+        // 不依赖 SSH Agent 插件；Credentials Binding 自带 withCredentials + sshUserPrivateKey
+        withCredentials([sshUserPrivateKey(
+          credentialsId: params.SSH_CREDENTIALS_ID,
+          keyFileVariable: 'SSH_KEY_FILE',
+          usernameVariable: 'SSH_USER_FROM_CRED'
+        )]) {
+          sh """
+            set -euo pipefail
+            export DEPLOY_HOST='${params.DEPLOY_HOST}'
+            export DEPLOY_USER='${params.DEPLOY_USER}'
+            export APP_RUN_USER='${params.APP_RUN_USER}'
+            export DEPLOY_PORT='${params.DEPLOY_SSH_PORT}'
+            export DEPLOY_PATH='${params.DEPLOY_PATH}'
+            export APP_HTTP_PORT='${params.APP_HTTP_PORT}'
+            export JAR_FILE=/tmp/web-test-deploy.jar
+            export SSH_IDENTITY_FILE="\${SSH_KEY_FILE}"
+            bash '${params.DEPLOY_SCRIPT}'
+          """
+        }
+      }
+    }
+  }
+  post {
+    always {
+      sh 'rm -f /tmp/web-test-deploy.jar || true'
+    }
+  }
+}

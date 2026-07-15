@@ -1,0 +1,51 @@
+services:
+  gitlab:
+    image: ${GITLAB_IMAGE:-gitlab/gitlab-ce:17.11.0-ce.0}
+    hostname: ${GITLAB_HOSTNAME:-gitlab.local}
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://${GITLAB_HOSTNAME:-gitlab.local}'
+        gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH_PORT:-2222}
+    ports:
+      - "${GITLAB_HTTP_PORT:-80}:80"
+      - "${GITLAB_SSH_PORT:-2222}:22"
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_data:/var/opt/gitlab
+      - gitlab_logs:/var/log/gitlab
+    shm_size: "256m"
+    networks: [ci-net]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/-/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 300s
+
+  jenkins:
+    image: ${JENKINS_IMAGE:-jenkins/jenkins:2.462.3-lts-jdk17}
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=true"
+    ports:
+      - "${JENKINS_HTTP_PORT:-8080}:8080"
+      - "${JENKINS_AGENT_PORT:-50000}:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # 若 Pipeline 需调用宿主机 Docker，取消下一行注释（注意安全风险）
+      # - /var/run/docker.sock:/var/run/docker.sock
+    networks: [ci-net]
+    restart: unless-stopped
+    user: "1000:1000"
+
+networks:
+  ci-net:
+    driver: bridge
+
+volumes:
+  gitlab_config:
+  gitlab_data:
+  gitlab_logs:
+  jenkins_home:

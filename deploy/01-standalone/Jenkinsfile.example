@@ -1,0 +1,28 @@
+pipeline {
+  agent any
+  options {
+    timestamps()
+  }
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+    stage('Build') {
+      steps {
+        sh 'echo "build on $(hostname)" && ls -la'
+      }
+    }
+    stage('Test') {
+      steps {
+        sh 'echo "run tests..."'
+      }
+    }
+  }
+  post {
+    always {
+      echo "build finished: ${currentBuild.currentResult}"
+    }
+  }
+}

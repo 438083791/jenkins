@@ -1,0 +1,26 @@
+[Unit]
+Description=Jenkins (scheme 05 without-docker, local war)
+After=network.target
+
+[Service]
+Type=simple
+User=jenkins
+Group=jenkins
+Environment=JENKINS_HOME=/opt/ci/jenkins/home
+Environment=CASC_JENKINS_CONFIG=/opt/ci/jenkins/home/casc_configs
+Environment=JENKINS_HTTP_PORT=8080
+Environment=JENKINS_WAR=/opt/ci/jenkins/jenkins.war
+# Jenkins LTS 需要 Java 21+
+Environment=JAVA_HOME_JENKINS=/usr/lib/jvm/java-21-openjdk-amd64
+Environment=SKIP_SETUP_WIZARD=false
+Environment=JENKINS_ADMIN_PASSWORD=admin
+ExecStart=/bin/bash /opt/ci/jenkins/start-jenkins.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

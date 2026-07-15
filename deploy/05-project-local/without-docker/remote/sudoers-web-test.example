@@ -1,0 +1,7 @@
+# 目标机：让「SSH 部署用户」免密操作 web-test 服务
+# 首列必须是实际 SSH 登录名（默认 deploy）；prepare-target.sh 会自动替换
+#   sudo visudo -cf /etc/sudoers.d/web-test-deploy
+#
+# 若系统是 sudo-rs，路径可能是 /usr/bin/systemctl 等
+
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl, /bin/systemctl, /usr/bin/journalctl, /bin/journalctl, /usr/bin/chown, /bin/chown, /usr/bin/chmod, /bin/chmod, /usr/bin/sed, /bin/sed, /usr/bin/install, /bin/install, /usr/bin/mv, /bin/mv

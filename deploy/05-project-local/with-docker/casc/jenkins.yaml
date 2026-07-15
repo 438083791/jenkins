@@ -1,0 +1,27 @@
+jenkins:
+  systemMessage: "Scheme 05 WITH Docker — build web-test (Spring Boot) via Maven/Docker agents"
+  numExecutors: 2
+  mode: NORMAL
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: GLOBAL
+              id: "gitlab-token"
+              secret: "${GITLAB_TOKEN:-changeme}"
+              description: "GitLab token (inject via env)"

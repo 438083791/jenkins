@@ -1,0 +1,8 @@
+# 强制脚本在 Linux / Jenkins Agent 上使用 LF，避免 CRLF 导致 set -o pipefail 报错
+*.sh text eol=lf
+*.bash text eol=lf
+*.service text eol=lf
+Jenkinsfile text eol=lf
+Jenkinsfile.* text eol=lf
+*.groovy text eol=lf
+**/mvnw text eol=lf

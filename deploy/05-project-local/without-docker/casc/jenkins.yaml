@@ -1,0 +1,27 @@
+jenkins:
+  systemMessage: "Scheme 05 WITHOUT Docker — build web-test with host JDK8 + Maven/mvnw"
+  numExecutors: 2
+  mode: NORMAL
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+tool:
+  jdk:
+    installations:
+      - name: "jdk8"
+        home: "/usr/lib/jvm/java-8-openjdk-amd64"
+  maven:
+    installations:
+      - name: "maven3"
+        home: "/usr/share/maven"
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"

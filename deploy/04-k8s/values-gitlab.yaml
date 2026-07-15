@@ -1,0 +1,31 @@
+# 实验环境示例：务必按官方 Chart 文档与集群资源校准后再用于生产
+global:
+  hosts:
+    domain: example.com
+    gitlab:
+      name: gitlab.example.com
+  ingress:
+    configureCertmanager: false
+    class: nginx
+
+# 显著缩小资源（仅实验）
+gitlab:
+  webservice:
+    minReplicas: 1
+    maxReplicas: 1
+  sidekiq:
+    minReplicas: 1
+  gitlab-shell:
+    minReplicas: 1
+
+postgresql:
+  install: true
+
+redis:
+  install: true
+
+certmanager:
+  install: false
+
+nginx-ingress:
+  enabled: false

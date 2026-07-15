@@ -1,0 +1,13 @@
+# 无 Docker 环境请在 Jenkins「插件管理」中安装（或首次向导选择后补装）：
+configuration-as-code
+workflow-aggregator
+git
+gitlab-plugin
+job-dsl
+pipeline-stage-view
+credentials-binding
+timestamper
+junit
+maven-plugin
+ssh-agent
+# 远程部署流水线依赖 ssh-agent；系统还需 openssh-client（ssh/scp）

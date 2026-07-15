@@ -1,0 +1,15 @@
+pipeline {
+  agent any
+  stages {
+    stage('Info') {
+      steps {
+        sh 'git rev-parse --short HEAD || true; uname -a'
+      }
+    }
+    stage('Build') {
+      steps {
+        sh 'echo build in dockerized jenkins'
+      }
+    }
+  }
+}

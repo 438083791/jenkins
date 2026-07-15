@@ -1,0 +1,43 @@
+controller:
+  image:
+    tag: "2.462.3-lts-jdk17"
+  numExecutors: 0
+  jenkinsUrl: "https://ci.example.com"
+  installPlugins:
+    - kubernetes
+    - gitlab-plugin
+    - git
+    - configuration-as-code
+    - workflow-aggregator
+    - credentials-binding
+  JCasC:
+    configScripts:
+      welcome-message: |
+        jenkins:
+          systemMessage: "Jenkins on Kubernetes (scheme 04)"
+          numExecutors: 0
+      location: |
+        unclassified:
+          location:
+            url: "https://ci.example.com/"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  persistence:
+    enabled: true
+    size: 20Gi
+
+agent:
+  enabled: true
+
+ingress:
+  enabled: true
+  hostName: ci.example.com
+  # tls:
+  #   - secretName: jenkins-tls
+  #     hosts:
+  #       - ci.example.com

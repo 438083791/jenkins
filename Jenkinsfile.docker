@@ -1,0 +1,71 @@
+#!groovy
+/**
+ * 方案五「有 Docker」：Maven 容器编译 + 构建 web-test 镜像并冒烟
+ * 与 deploy/05-project-local/with-docker/Jenkinsfile 保持一致
+ */
+pipeline {
+  agent none
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+  environment {
+    APP_DIR = 'web-test'
+    APP_IMAGE = 'web-test:ci'
+    APP_CONTAINER = 'web-test-ci-smoke'
+  }
+  stages {
+    stage('Maven package (Docker agent)') {
+      agent {
+        docker {
+          image 'maven:3.8.8-eclipse-temurin-8'
+          args '-v $HOME/.m2:/root/.m2'
+          reuseNode true
+        }
+      }
+      steps {
+        dir("${APP_DIR}") {
+          sh 'mvn -B -DskipTests=false clean package'
+        }
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: "${APP_DIR}/target/surefire-reports/*.xml"
+          archiveArtifacts artifacts: "${APP_DIR}/target/*.jar", fingerprint: true, allowEmptyArchive: true
+        }
+      }
+    }
+    stage('Docker build app image') {
+      agent any
+      steps {
+        dir("${APP_DIR}") {
+          sh "docker build -t ${APP_IMAGE} ."
+        }
+      }
+    }
+    stage('Smoke run container') {
+      agent any
+      steps {
+        sh """
+          docker rm -f ${APP_CONTAINER} >/dev/null 2>&1 || true
+          docker run -d --name ${APP_CONTAINER} -p 18080:8080 ${APP_IMAGE}
+          for i in \$(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/hello | grep -q hello; then
+              echo 'smoke ok'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'smoke failed' >&2
+          docker logs ${APP_CONTAINER} || true
+          exit 1
+        """
+      }
+      post {
+        always {
+          sh "docker rm -f ${APP_CONTAINER} >/dev/null 2>&1 || true"
+        }
+      }
+    }
+  }
+}
