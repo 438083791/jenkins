@@ -47,17 +47,18 @@ if [[ -n "${SSH_IDENTITY_FILE:-}" ]]; then
 fi
 SCP=(scp "${SCP_BASE[@]}")
 
-# 先传到部署用户家目录（一定可写），再安装到 /opt/web-test
+# 先传到目标机 /tmp（不依赖家目录可写），再安装到 /opt/web-test
+REMOTE_STAGING="/tmp/web-test-deploy-${DEPLOY_USER}.jar.new"
 echo "==== 部署 ${JAR_FILE} -> ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/web-test.jar ===="
 
-"${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" 'mkdir -p "$HOME/.web-test-deploy"'
-"${SCP[@]}" "${JAR_FILE}" "${DEPLOY_USER}@${DEPLOY_HOST}:.web-test-deploy/web-test.jar.new"
+"${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+  "id; echo HOME=\$HOME; ls -ld \$HOME /tmp 2>/dev/null || true; rm -f '${REMOTE_STAGING}'"
+"${SCP[@]}" "${JAR_FILE}" "${DEPLOY_USER}@${DEPLOY_HOST}:${REMOTE_STAGING}"
 
 "${SSH[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-  "APP_DIR='${DEPLOY_PATH}' APP_PORT='${APP_HTTP_PORT}' APP_RUN_USER='${APP_RUN_USER}' bash -s" <<'EOS'
+  "APP_DIR='${DEPLOY_PATH}' APP_PORT='${APP_HTTP_PORT}' APP_RUN_USER='${APP_RUN_USER}' STAGING='${REMOTE_STAGING}' bash -s" <<'EOS'
 set -euo pipefail
 
-STAGING="${HOME}/.web-test-deploy/web-test.jar.new"
 test -f "${STAGING}"
 
 mkdir -p "${APP_DIR}" 2>/dev/null || true
@@ -84,7 +85,7 @@ install_jar() {
     sudo -n chmod 640 "${APP_DIR}/web-test.jar" || true
     return 0
   fi
-  echo "无法写入 ${APP_DIR}：请对目录 chmod 775 且把 ${USER} 加入 ${APP_RUN_USER} 组，或配置 sudoers（install/mv/chown）" >&2
+  echo "无法写入 ${APP_DIR}：请对目录 chmod 775 且保证属主/组为 ${APP_RUN_USER}，或配置 sudoers（install/mv/chown）" >&2
   ls -la "$(dirname "${APP_DIR}")" "${APP_DIR}" 2>/dev/null || true
   id
   exit 1

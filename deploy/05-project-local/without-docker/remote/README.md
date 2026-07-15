@@ -32,14 +32,23 @@ sudo bash prepare-target.sh
 # sudo APP_USER=webapp DEPLOY_USER=deploy bash prepare-target.sh
 ```
 
-然后为 **`deploy`**（或你设的 DEPLOY_USER）配置公钥：
+然后为 **`deploy`**（或你设的 `DEPLOY_USER`）配置 SSH 密钥（在目标机执行一次即可）：
 
 ```bash
-sudo mkdir -p /home/deploy/.ssh
-sudo nano /home/deploy/.ssh/authorized_keys
-sudo chown -R deploy:deploy /home/deploy/.ssh
-sudo chmod 700 /home/deploy/.ssh
-sudo chmod 600 /home/deploy/.ssh/authorized_keys
+sudo bash setup-deploy-ssh-key.sh
+# 用户名不是 deploy 时：
+# sudo DEPLOY_USER=你的用户 bash setup-deploy-ssh-key.sh
+```
+
+脚本会：生成无口令密钥 → 写入 `~/.ssh/authorized_keys` → **打印私钥**（复制到 Jenkins 凭据，Username 与 `DEPLOY_USER` 一致）。
+
+从本机或 Jenkins 机验证（私钥先落到文件，例如 `/tmp/deploy_key`）：
+
+```bash
+chmod 600 /tmp/deploy_key
+# accept-new：首次自动写入 known_hosts（避免 Host key verification failed）
+ssh -i /tmp/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+  deploy@192.168.122.129 'echo ssh_ok'
 ```
 
 校验：
@@ -71,7 +80,8 @@ sudo systemctl stop web-test || true
 1. `openssh-client`；流水线用 `withCredentials(sshUserPrivateKey)`，**不必**装 SSH Agent 插件  
 2. Credentials → **SSH Username with private key**  
    - ID：`web-test-deploy-ssh`  
-   - **Username：`deploy`**（与 `DEPLOY_USER` 一致）  
+   - **Username：`deploy`**  
+   - **Private Key**：粘贴目标机上的 `/home/deploy/.ssh/id_ed25519`（或 `id_rsa`）全文  
 3. Job 参数：`DEPLOY_USER=deploy`，`APP_RUN_USER=deploy`（与 systemd `User=` 一致）
 
 ## 3. 构建参数
@@ -91,6 +101,7 @@ sudo systemctl stop web-test || true
 | 文件 | 作用 |
 |---|---|
 | `prepare-target.sh` | 目标机初始化 |
+| `setup-deploy-ssh-key.sh` | 为目标 SSH 用户生成密钥并写入 authorized_keys |
 | `web-test.service` | systemd 单元（`User=`/`Group=` 由 prepare 写成 APP_USER） |
 | `deploy-via-ssh.sh` | Jenkins 调用的部署脚本 |
 | `sudoers-web-test.example` | 免密 sudo 模板（首列 DEPLOY_USER） |
