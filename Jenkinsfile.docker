@@ -1,7 +1,10 @@
 #!groovy
 /**
  * 方案五「有 Docker」：Maven 容器编译 + 构建 web-test 镜像并冒烟
+ * 冒烟通过后常驻启动，宿主机端口 8088
  * 与 deploy/05-project-local/with-docker/Jenkinsfile 保持一致
+ *
+ * Linux 上挂载目录常为 root 属主时，会先同步到 Job workspace 再构建。
  */
 pipeline {
   agent none
@@ -13,8 +16,31 @@ pipeline {
     APP_DIR = 'web-test'
     APP_IMAGE = 'web-test:ci'
     APP_CONTAINER = 'web-test-ci-smoke'
+    APP_RUN_CONTAINER = 'web-test'
+    APP_HTTP_PORT = '8088'
+    SOURCE_PROJECT = '/workspace/project'
   }
   stages {
+    stage('Init workspace') {
+      agent any
+      steps {
+        script {
+          if (fileExists("${SOURCE_PROJECT}/${APP_DIR}/pom.xml")) {
+            sh """
+              set -e
+              rm -rf "${WORKSPACE}/${APP_DIR}"
+              mkdir -p "${WORKSPACE}"
+              cp -a "${SOURCE_PROJECT}/${APP_DIR}" "${WORKSPACE}/${APP_DIR}"
+              echo "Synced ${SOURCE_PROJECT}/${APP_DIR} -> ${WORKSPACE}/${APP_DIR}"
+            """
+          } else {
+            echo "No mount at ${SOURCE_PROJECT}; using existing workspace content"
+          }
+          env.PROJECT_ROOT = env.WORKSPACE
+          echo "Using PROJECT_ROOT=${env.PROJECT_ROOT}"
+        }
+      }
+    }
     stage('Maven package (Docker agent)') {
       agent {
         docker {
@@ -24,21 +50,23 @@ pipeline {
         }
       }
       steps {
-        dir("${APP_DIR}") {
+        dir("${env.PROJECT_ROOT}/${APP_DIR}") {
           sh 'mvn -B -DskipTests=false clean package'
         }
       }
       post {
         always {
-          junit allowEmptyResults: true, testResults: "${APP_DIR}/target/surefire-reports/*.xml"
-          archiveArtifacts artifacts: "${APP_DIR}/target/*.jar", fingerprint: true, allowEmptyArchive: true
+          dir("${env.PROJECT_ROOT}/${APP_DIR}") {
+            junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
+            archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
+          }
         }
       }
     }
     stage('Docker build app image') {
       agent any
       steps {
-        dir("${APP_DIR}") {
+        dir("${env.PROJECT_ROOT}/${APP_DIR}") {
           sh "docker build -t ${APP_IMAGE} ."
         }
       }
@@ -47,10 +75,16 @@ pipeline {
       agent any
       steps {
         sh """
+          set -e
           docker rm -f ${APP_CONTAINER} >/dev/null 2>&1 || true
-          docker run -d --name ${APP_CONTAINER} -p 18080:8080 ${APP_IMAGE}
+
+          NETWORK="\${JENKINS_DOCKER_NETWORK:-jenkins-local}"
+          docker run -d --name ${APP_CONTAINER} --network "\$NETWORK" ${APP_IMAGE}
+          SMOKE_URL="http://${APP_CONTAINER}:8080/hello"
+          echo "Smoke URL: \$SMOKE_URL (network=\$NETWORK)"
+
           for i in \$(seq 1 30); do
-            if curl -fsS http://127.0.0.1:18080/hello | grep -q hello; then
+            if curl -fsS "\$SMOKE_URL" | grep -q hello; then
               echo 'smoke ok'
               exit 0
             fi
@@ -65,6 +99,20 @@ pipeline {
         always {
           sh "docker rm -f ${APP_CONTAINER} >/dev/null 2>&1 || true"
         }
+      }
+    }
+    stage('Run web-test') {
+      agent any
+      steps {
+        sh """
+          set -e
+          docker rm -f ${APP_RUN_CONTAINER} >/dev/null 2>&1 || true
+          NETWORK="\${JENKINS_DOCKER_NETWORK:-jenkins-local}"
+          docker run -d --name ${APP_RUN_CONTAINER} --restart unless-stopped \\
+            --network "\$NETWORK" -p ${APP_HTTP_PORT}:8080 ${APP_IMAGE}
+          echo "web-test started: http://localhost:${APP_HTTP_PORT}/hello"
+          docker ps --filter name=^/${APP_RUN_CONTAINER}\$ --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'
+        """
       }
     }
   }

@@ -1,15 +1,14 @@
-FROM jenkins/jenkins:2.462.3-lts-jdk17
+FROM docker:28-cli AS docker-cli
+
+FROM jenkins/jenkins:2.568.1-lts-jdk21
 
 USER root
-ARG DOCKER_CLI_VERSION=24.0.7
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git curl ca-certificates \
-  && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
-       | tar -xz -C /tmp \
-  && mv /tmp/docker/docker /usr/local/bin/docker \
-  && rm -rf /tmp/docker /var/lib/apt/lists/* \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
   && groupadd -f docker \
   && usermod -aG docker jenkins
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
 USER jenkins
 

@@ -1,7 +1,7 @@
 configuration-as-code
 workflow-aggregator
 git
-gitlab-plugin
+gitlab-plugin:1.9.16
 credentials-binding
 timestamper
 pipeline-stage-view

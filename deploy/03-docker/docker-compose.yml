@@ -25,7 +25,7 @@ services:
       start_period: 300s
 
   jenkins:
-    image: ${JENKINS_IMAGE:-jenkins/jenkins:2.462.3-lts-jdk17}
+    image: ${JENKINS_IMAGE:-jenkins/jenkins:2.568.1-lts-jdk21}
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       JAVA_OPTS: "-Djenkins.install.runSetupWizard=true"

@@ -10,3 +10,4 @@ deploy/**/env.sh
 **/secrets/
 !**/secrets/.gitkeep
 jenkins.zip
+web-test//

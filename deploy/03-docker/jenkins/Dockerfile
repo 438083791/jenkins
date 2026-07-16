@@ -1,4 +1,4 @@
-FROM jenkins/jenkins:2.462.3-lts-jdk17
+FROM jenkins/jenkins:2.568.1-lts-jdk21
 
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends git \

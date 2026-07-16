@@ -9,6 +9,8 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-admin}
       GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      # 冒烟容器加入同一网络后，Jenkins 用容器名访问（勿用 127.0.0.1）
+      JENKINS_DOCKER_NETWORK: jenkins-local
       JAVA_OPTS: >-
         -Djenkins.install.runSetupWizard=false
         -Dcasc.jenkins.config=/var/jenkins_home/casc_configs
@@ -22,7 +24,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "${DOCKER_GID:-0}"
+    networks:
+      - jenkins-local
     restart: unless-stopped
+
+networks:
+  jenkins-local:
+    name: jenkins-local
 
 volumes:
   jenkins_home:

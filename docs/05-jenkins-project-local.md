@@ -99,15 +99,16 @@ bash up.sh
 ```
 
 1. 浏览器打开 `http://localhost:8080`，用户 `admin`，密码见 `.env` 中 `JENKINS_ADMIN_PASSWORD`  
-2. New Item → Pipeline → Definition: Pipeline script from SCM，或直接粘贴  
-3. Script Path 填：`Jenkinsfile.docker`（仓库根）  
-4. 若无 SCM：Pipeline script 可复制本目录 `Jenkinsfile`；工作区需包含 `web-test/`（compose 已挂载到 `/workspace/project`，也可把 Job 工作区指到该路径）  
+2. New Item → Pipeline → Definition 选 **Pipeline script**（本地 compose 未配 Git 时不要选 from SCM）  
+3. 粘贴本目录 `Jenkinsfile` 全部内容（与根目录 `Jenkinsfile.docker` 相同）  
+4. 脚本会把挂载的 `/workspace/project/web-test` **同步到 Job workspace** 再构建（避免 Linux 上挂载目录属主为 root 时出现 `AccessDeniedException: …@tmp`）  
 
 **说明**：
 
 - 需挂载 `/var/run/docker.sock`；Linux 下 `up.sh` 会尝试写入 `DOCKER_GID`  
 - Windows / Docker Desktop：一般可直接挂载命名管道/ sock，权限问题按 Desktop 文档处理  
 - 应用镜像见 `web-test/Dockerfile`（`eclipse-temurin:8-jre`）  
+- 冒烟通过后会常驻启动容器 `web-test`，宿主机访问：`http://localhost:8088/hello`  
 
 冒烟成功标准：容器内服务响应 `GET /hello` 含文本 `hello`。
 

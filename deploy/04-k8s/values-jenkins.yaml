@@ -1,11 +1,11 @@
 controller:
   image:
-    tag: "2.462.3-lts-jdk17"
+    tag: "2.568.1-lts-jdk21"
   numExecutors: 0
   jenkinsUrl: "https://ci.example.com"
   installPlugins:
     - kubernetes
-    - gitlab-plugin
+    - gitlab-plugin:1.9.16
     - git
     - configuration-as-code
     - workflow-aggregator
