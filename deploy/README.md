@@ -4,7 +4,7 @@
 
 | 目录 | 对应方案 | 入口 |
 |---|---|---|
-| [01-standalone](./01-standalone/) | 独立服务器 | `install-gitlab.sh` / `install-jenkins.sh` |
+| [01-standalone](./01-standalone/) | 独立服务器 | `install-gitlab.sh`；Jenkins 复用 [05 without-docker](./05-project-local/without-docker/)（`install-jenkins.sh` 为包装脚本） |
 | [02-supervisor](./02-supervisor/) | Supervisor | `install.sh` / `ctl.sh` |
 | [03-docker](./03-docker/) | Docker Compose | `compose.sh up` |
 | [04-k8s](./04-k8s/) | Kubernetes | `check-cluster.sh` → `install-jenkins.sh` |

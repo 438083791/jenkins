@@ -81,7 +81,7 @@ jenkins/                              # 仓库根
 ```text
 宿主机
 ├── openjdk-8  + maven     ← 构建 web-test
-├── openjdk-17 + jenkins.war ← 跑 Controller
+├── openjdk-21 + jenkins.war ← 跑 Controller
 └── Pipeline:
       tools { jdk 'jdk8'; maven 'maven3' }
       dir('web-test') { sh 'mvn -B clean package' }

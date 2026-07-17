@@ -111,7 +111,11 @@ if [[ ! -x "${JAVA8_HOME}/bin/java" ]]; then
 fi
 
 # ---------- 3) systemd + sudoers ----------
-install -m 0644 "${SCRIPT_DIR}/web-test.service" /etc/systemd/system/web-test.service
+# 模板可能带 CRLF（Windows 检出）；写入前去掉 \r
+tmp_unit="$(mktemp)"
+tr -d '\r' < "${SCRIPT_DIR}/web-test.service" > "${tmp_unit}"
+install -m 0644 "${tmp_unit}" /etc/systemd/system/web-test.service
+rm -f "${tmp_unit}"
 sed -i "s|/usr/lib/jvm/java-8-openjdk-amd64|${JAVA8_HOME}|g" /etc/systemd/system/web-test.service
 sed -i "s|^User=.*|User=${APP_USER}|g" /etc/systemd/system/web-test.service
 sed -i "s|^Group=.*|Group=${APP_USER}|g" /etc/systemd/system/web-test.service
@@ -123,7 +127,9 @@ systemctl enable web-test
 
 if [[ -f "${SCRIPT_DIR}/sudoers-web-test.example" ]]; then
   tmp_sudo="$(mktemp)"
-  sed -E "s/^[^#[:space:]]+ /${DEPLOY_USER} /" "${SCRIPT_DIR}/sudoers-web-test.example" \
+  # 去掉 Windows CRLF（模板若带 \r，visudo 会报 garbage at end of line）
+  tr -d '\r' < "${SCRIPT_DIR}/sudoers-web-test.example" \
+    | sed -E "s/^[^#[:space:]]+ /${DEPLOY_USER} /" \
     | grep -v '^#' | grep -v '^$' > "${tmp_sudo}" || true
   if [[ -s "${tmp_sudo}" ]]; then
     install -m 440 "${tmp_sudo}" /etc/sudoers.d/web-test-deploy

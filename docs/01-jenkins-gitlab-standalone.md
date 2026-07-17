@@ -42,10 +42,10 @@
 
 | 组件 | 建议版本 | 备注 |
 |---|---|---|
-| OS | Ubuntu 22.04 LTS / CentOS Stream 9 | 文档以 Ubuntu 为例 |
+| OS | Ubuntu 22.04+ / 25.x | 文档以 Ubuntu 为例 |
 | GitLab | GitLab CE 最新稳定版（Omnibus） | 自带 Nginx、PostgreSQL、Redis |
-| Jenkins | LTS（如 2.462.x） | 用官方 deb/rpm 包 |
-| JDK | 十七（Jenkins 运行依赖） | 构建任务可另配 JDK 8/11/17 |
+| Jenkins | 现行 LTS（`jenkins.war`） | **复用方案五** `without-docker` 安装脚本，不用 apt deb |
+| JDK | **21**（跑 Jenkins）；构建可另配 8 | 现行 LTS **不支持** 用 17 启动 Controller |
 | Git | 系统自带即可 | Jenkins 侧需配置 Git 工具 |
 
 资源起步建议：
@@ -100,31 +100,41 @@ sudo gitlab-ctl status
 
 ## 5. Jenkins 独立部署与结构深挖
 
-### 5.1 安装（Ubuntu）
+### 5.1 安装（Ubuntu，复用方案五脚本）
+
+现行 Jenkins LTS 需要 **JDK 21+**。方案一的 `install-jenkins.sh` 会调用方案五无 Docker 脚本（`jenkins.war` + `systemd`），全仓库只维护这一套宿主机安装逻辑：
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y openjdk-17-jdk fontconfig
-sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
-  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
-echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
-  https://pkg.jenkins.io/debian-stable binary/" | sudo tee \
-  /etc/apt/sources.list.d/jenkins.list > /dev/null
-sudo apt-get update
-sudo apt-get install -y jenkins
-sudo systemctl enable --now jenkins
+cd deploy/01-standalone
+cp .env.example .env   # 可选，改端口 / 密码
+sudo bash install-jenkins.sh
+# 内部等价于：
+#   sudo bash ../05-project-local/without-docker/install-prereqs.sh
+#   sudo bash ../05-project-local/without-docker/install-jenkins.sh
 ```
 
-访问：`http://<jenkins-host>:8080`，初始密码：
+访问：`http://<jenkins-host>:8080`（端口见 `.env` 中 `JENKINS_HTTP_PORT`）。
 
 ```bash
-sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+systemctl status jenkins-local
+# CasC 已配置密码时用 admin；否则：
+sudo cat /opt/ci/jenkins/home/secrets/initialAdminPassword
 ```
+
+JDK 说明见 [`docs/06-install-jdk8-and-jdk17.md`](./06-install-jdk8-and-jdk17.md)。
 
 ### 5.2 核心目录结构（学习重点）
 
+本方案实际 `JENKINS_HOME` 为 **`/opt/ci/jenkins/home`**（war 方式）。下面以官方 deb 的 `/var/lib/jenkins` 作对照说明，概念相同——学习时把路径替换为本方案路径即可。
+
 ```text
-/var/lib/jenkins/                 # JENKINS_HOME（一切状态的根）
+/opt/ci/jenkins/home/             # 本方案 JENKINS_HOME
+/opt/ci/jenkins/jenkins.war       # 主程序 WAR
+/opt/ci/jenkins/start-jenkins.sh  # 启动脚本（校验 Java >= 21）
+# systemd: jenkins-local.service
+
+# --- 以下为 Jenkins 通用布局（deb 默认路径对照）---
+/var/lib/jenkins/                 # 官方 deb 的 JENKINS_HOME（对照用）
 ├── config.xml                    # 全局配置（安全、执行器数、工具等）
 ├── credentials.xml               # 凭证密文存储
 ├── secrets/                      # 主密钥与节点密钥
@@ -144,9 +154,9 @@ sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 ├── nodes/                        # 静态 Agent 节点配置
 └── logs/                         # Jenkins 自身日志摘要
 
-/etc/default/jenkins              # 启动参数（端口、JAVA_OPTS、用户）
-/usr/share/java/jenkins.war       # 主程序 WAR
-/var/log/jenkins/jenkins.log      # 系统级日志
+/etc/default/jenkins              # deb 包启动参数（本方案不使用）
+/usr/share/java/jenkins.war       # deb 包 WAR（本方案用 /opt/ci/jenkins/jenkins.war）
+/var/log/jenkins/jenkins.log      # deb 包日志（本方案用 journalctl -u jenkins-local）
 ```
 
 **建议动手练习**：

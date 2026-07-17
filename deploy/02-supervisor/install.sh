@@ -12,7 +12,8 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y openjdk-17-jdk git curl supervisor
+# 现行 Jenkins LTS 需要 Java 21+（Ubuntu 25 亦适用）
+apt-get install -y openjdk-21-jdk git curl supervisor
 
 id -u jenkins >/dev/null 2>&1 || useradd -r -m -d /opt/ci/jenkins/home -s /bin/bash jenkins
 

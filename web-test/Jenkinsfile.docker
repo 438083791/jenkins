@@ -1,0 +1,100 @@
+#!groovy
+/**
+ * 独立 GitLab 仓（仓库根 = 应用根，含 pom.xml / Dockerfile）· 有 Docker
+ *
+ * Jenkins 配置：
+ *   Pipeline script from SCM → Script Path: Jenkinsfile.docker
+ *
+ * 前置：Jenkins 能访问 Docker Engine（docker.sock）；建议与应用容器同网 jenkins-local
+ */
+pipeline {
+  agent none
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+  environment {
+    // 独立仓：应用就在仓库根（SCM checkout 后的 WORKSPACE）
+    APP_DIR = '.'
+    APP_IMAGE = 'web-test:ci'
+    APP_CONTAINER = 'web-test-ci-smoke'
+    APP_RUN_CONTAINER = 'web-test'
+    APP_HTTP_PORT = '8088'
+  }
+  stages {
+    stage('Prepare') {
+      agent any
+      steps {
+        sh 'test -f pom.xml && test -f Dockerfile'
+      }
+    }
+    stage('Maven package (Docker agent)') {
+      agent {
+        docker {
+          image 'maven:3.8.8-eclipse-temurin-8'
+          args '-v $HOME/.m2:/root/.m2'
+          reuseNode true
+        }
+      }
+      steps {
+        sh 'mvn -B -DskipTests=false clean package'
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
+          archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
+        }
+      }
+    }
+    stage('Docker build app image') {
+      agent any
+      steps {
+        sh "docker build -t ${APP_IMAGE} ."
+      }
+    }
+    stage('Smoke run container') {
+      agent any
+      steps {
+        sh """
+          set -e
+          docker rm -f ${APP_CONTAINER} >/dev/null 2>&1 || true
+
+          NETWORK="\${JENKINS_DOCKER_NETWORK:-jenkins-local}"
+          docker run -d --name ${APP_CONTAINER} --network "\$NETWORK" ${APP_IMAGE}
+          SMOKE_URL="http://${APP_CONTAINER}:8080/hello"
+          echo "Smoke URL: \$SMOKE_URL (network=\$NETWORK)"
+
+          for i in \$(seq 1 30); do
+            if curl -fsS "\$SMOKE_URL" | grep -q hello; then
+              echo 'smoke ok'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'smoke failed' >&2
+          docker logs ${APP_CONTAINER} || true
+          exit 1
+        """
+      }
+      post {
+        always {
+          sh "docker rm -f ${APP_CONTAINER} >/dev/null 2>&1 || true"
+        }
+      }
+    }
+    stage('Run web-test') {
+      agent any
+      steps {
+        sh """
+          set -e
+          docker rm -f ${APP_RUN_CONTAINER} >/dev/null 2>&1 || true
+          NETWORK="\${JENKINS_DOCKER_NETWORK:-jenkins-local}"
+          docker run -d --name ${APP_RUN_CONTAINER} --restart unless-stopped \\
+            --network "\$NETWORK" -p ${APP_HTTP_PORT}:8080 ${APP_IMAGE}
+          echo "web-test started: http://localhost:${APP_HTTP_PORT}/hello"
+          docker ps --filter name=^/${APP_RUN_CONTAINER}\$ --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'
+        """
+      }
+    }
+  }
+}

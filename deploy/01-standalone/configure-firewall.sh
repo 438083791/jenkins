@@ -5,7 +5,13 @@
 #   sudo bash configure-firewall.sh jenkins
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/load-env.sh"
+
+JENKINS_HTTP_PORT="${JENKINS_HTTP_PORT:-8080}"
 ROLE="${1:-}"
+
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "请使用 root 或 sudo 运行" >&2
   exit 1
@@ -24,7 +30,7 @@ case "${ROLE}" in
     ufw allow 22/tcp
     ;;
   jenkins)
-    ufw allow "${JENKINS_HTTP_PORT:-8080}/tcp"
+    ufw allow "${JENKINS_HTTP_PORT}/tcp"
     ufw allow 50000/tcp
     ;;
   *)
