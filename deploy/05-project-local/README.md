@@ -5,4 +5,6 @@
 | [with-docker](./with-docker/) | 有 Docker | `bash up.sh`，Job 选 `Jenkinsfile.docker` |
 | [without-docker](./without-docker/) | 无 Docker | `install-prereqs.sh` → `install-jenkins.sh`，Job 选根目录 `Jenkinsfile` |
 
-说明文档：[`docs/05-jenkins-project-local.md`](../../docs/05-jenkins-project-local.md)
+说明文档：[`docs/05-jenkins-project-local.md`](../../docs/05-jenkins-project-local.md)  
+
+三目录职责（GitLab / Supervisor / Jenkins）：见 [`deploy/README.md`](../README.md)。

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 无 Docker：下载 jenkins.war 并放置目录与 CasC（JDK 21+）
-# 也可被方案一 install-jenkins.sh 调用（唯一的宿主机 Jenkins 安装入口）
+# 也可被其它文档直接调用（唯一的宿主机 Jenkins 安装入口）
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

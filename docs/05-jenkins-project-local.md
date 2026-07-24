@@ -5,7 +5,9 @@
 > 1. **有 Docker**：Compose 拉起 Jenkins，流水线用 Maven 容器编译，并构建/冒烟运行应用镜像  
 > 2. **无 Docker**：宿主机安装 JDK8/Maven + Jenkins WAR，流水线直接 `mvn package` 并启动 jar 冒烟  
 
-配置目录：[`deploy/05-project-local/`](../deploy/05-project-local/)
+配置目录：[`deploy/05-project-local/`](../deploy/05-project-local/)  
+
+三目录职责（装 GitLab / Supervisor / Jenkins）：见 [`deploy/README.md`](../deploy/README.md)。
 
 ---
 

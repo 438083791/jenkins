@@ -1,13 +1,31 @@
-# 方案五配置与脚本索引
+# 部署脚本索引
 
-各方案独立目录，说明见 `docs/`。
+说明文档见 `docs/`。
+
+## 三目录职责表（01 / 02 / 05）
+
+| 目录 | 职责 | 用什么装 | 不要用它装 |
+|---|---|---|---|
+| [`01-standalone`](./01-standalone/) | GitLab 独立机；防火墙等辅助 | **`install-gitlab.sh`** | Jenkins（已改走 05） |
+| [`02-supervisor`](./02-supervisor/) | 应用机：Supervisor 管业务进程、上传部署 | **`install.sh`**（+ `deploy-via-ssh.sh`） | GitLab / Jenkins |
+| [`05-project-local`](./05-project-local/) | 宿主机 Jenkins（及本仓 CI / 可选 Docker Jenkins） | **`without-docker/install-prereqs.sh` + `install-jenkins.sh`** | GitLab；应用机 Supervisor |
+
+约定：
+
+1. **装 GitLab** → 只用 `01-standalone/install-gitlab.sh`  
+2. **装 Jenkins** → 只用 `05-project-local/without-docker/`（`install-prereqs.sh` → `install-jenkins.sh`）  
+3. **装 Supervisor / 应用机** → 只用 `02-supervisor/install.sh`  
+
+---
+
+## 各方案入口（含 03 / 04）
 
 | 目录 | 对应方案 | 入口 |
 |---|---|---|
-| [01-standalone](./01-standalone/) | 独立服务器 | `install-gitlab.sh`；Jenkins 复用 [05 without-docker](./05-project-local/without-docker/)（`install-jenkins.sh` 为包装脚本） |
+| [01-standalone](./01-standalone/) | 独立服务器 | `install-gitlab.sh`；Jenkins 见上表 → 05 |
 | [02-supervisor](./02-supervisor/) | GitLab→Jenkins 打包上传→Supervisor 管应用 | 应用机 `install.sh`；Jenkins 用 `deploy-via-ssh.sh` |
 | [03-docker](./03-docker/) | Docker Compose | `compose.sh up` |
-| [04-k8s](./04-k8s/) | Kubernetes | `check-cluster.sh` → `install-jenkins.sh` |
+| [04-k8s](./04-k8s/) | Kubernetes | `check-cluster.sh` → `install-jenkins.sh`（K8s 专用，与 05 宿主机脚本不同） |
 | [05-project-local](./05-project-local/) | 本仓库 CI（web-test） | **有 Docker** `with-docker/up.sh` / **无 Docker** `without-docker/install-*.sh` |
 
 根目录流水线：

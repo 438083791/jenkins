@@ -12,7 +12,8 @@
 | 部署形态 | 物理机或虚拟机，**非容器**，进程级安装 |
 | 组件分布 | 服务器 A：GitLab；服务器 B：Jenkins（可再加 Agent） |
 | 核心收益 | 看清原生安装目录、配置文件、日志与进程模型 |
-| **配置目录** | [`deploy/01-standalone/`](../deploy/01-standalone/) |
+| **配置目录** | [`deploy/01-standalone/`](../deploy/01-standalone/)（GitLab）；Jenkins 见 [`deploy/05-project-local/without-docker/`](../deploy/05-project-local/without-docker/) |
+| **职责划分** | [`deploy/README.md` 三目录职责表](../deploy/README.md) |
 
 本方案刻意不用 Docker / K8s，便于直接观察文件系统与 systemd 服务行为。
 
@@ -100,18 +101,18 @@ sudo gitlab-ctl status
 
 ## 5. Jenkins 独立部署与结构深挖
 
-### 5.1 安装（Ubuntu，复用方案五脚本）
+### 5.1 安装（Ubuntu，使用方案五脚本）
 
-现行 Jenkins LTS 需要 **JDK 21+**。方案一的 `install-jenkins.sh` 会调用方案五无 Docker 脚本（`jenkins.war` + `systemd`），全仓库只维护这一套宿主机安装逻辑：
+现行 Jenkins LTS 需要 **JDK 21+**。宿主机 Jenkins **只维护一套**安装脚本，位于方案五：
 
 ```bash
-cd deploy/01-standalone
+cd deploy/05-project-local/without-docker
 cp .env.example .env   # 可选，改端口 / 密码
+sudo bash install-prereqs.sh
 sudo bash install-jenkins.sh
-# 内部等价于：
-#   sudo bash ../05-project-local/without-docker/install-prereqs.sh
-#   sudo bash ../05-project-local/without-docker/install-jenkins.sh
 ```
+
+（方案一目录 `deploy/01-standalone/` 只负责 GitLab 等；三目录职责见 [`deploy/README.md`](../deploy/README.md)。）
 
 访问：`http://<jenkins-host>:8080`（端口见 `.env` 中 `JENKINS_HTTP_PORT`）。
 

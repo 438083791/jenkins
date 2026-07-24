@@ -13,6 +13,7 @@
 | 相对方案一 | 方案一侧重 Jenkins 自身安装与目录；本方案补齐 **构建产物如何上线并由进程管理器守护** |
 | 典型拓扑 | A：GitLab；B：Jenkins；C：应用机（Supervisor 管 `web-test` 等） |
 | **配置目录** | [`deploy/02-supervisor/`](../deploy/02-supervisor/) |
+| **职责划分** | [`deploy/README.md` 三目录职责表](../deploy/README.md)（本目录只管应用机 Supervisor，不管 GitLab/Jenkins 安装） |
 
 **标准流程（本方案核心）**
 
