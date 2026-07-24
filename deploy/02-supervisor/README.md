@@ -61,5 +61,18 @@ sudo ufw allow 9001/tcp
 ```bash
 bash ctl.sh status
 bash ctl.sh restart
-bash ctl.sh logs
+bash ctl.sh logs          # 实时跟踪
+bash ctl.sh last 2000000  # supervisorctl：最近约 2MB（注意是字节）
+bash ctl.sh file 2000     # 推荐：直接读文件最后 2000 行，最全
 ```
+
+### 日志看不全时
+
+| 方式 | 说明 |
+|---|---|
+| Web UI 页面 | 内置只拉一小段，**没法靠配置大幅加长**，只适合扫一眼 |
+| `supervisorctl tail -N` | `N` 是**字节**不是行，例：`supervisorctl tail -500000 web-test` |
+| 直接读文件（推荐） | `tail -n 2000 /opt/app-logs/web-test.out.log` |
+| 保留更久 | 调大 `stdout_logfile_maxbytes` / `stdout_logfile_backups`（`web-test.conf`），再 `install.sh` 或 `reread && update` |
+
+当前模板默认：单文件约 **200MB** × **20** 个备份。
