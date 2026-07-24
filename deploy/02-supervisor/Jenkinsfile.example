@@ -1,0 +1,146 @@
+#!groovy
+/**
+ * 方案二示例：GitLab 触发 → Jenkins 打包 → SSH 上传 → Supervisor 重启应用
+ *
+ * 用法：
+ *   1) 独立仓（web-test）：把本文件拷为仓库根 Jenkinsfile，并把
+ *      deploy-via-ssh.sh 放到 ci/ 或改下方脚本路径
+ *   2) 本 monorepo：Pipeline from SCM，Script Path 指向本文件；
+ *      部署脚本用相对仓库根的路径
+ *
+ * 前置：jdk8 / maven3；凭据 web-test-deploy-ssh；应用机已执行 install.sh
+ */
+pipeline {
+  agent any
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+  tools {
+    jdk 'jdk8'
+    maven 'maven3'
+  }
+  parameters {
+    booleanParam(name: 'DEPLOY_TO_REMOTE', defaultValue: true, description: '是否 SSH 部署到 Supervisor 应用机')
+    string(name: 'DEPLOY_HOST', defaultValue: '192.168.122.144', description: '应用机 IP / 主机名')
+    string(name: 'DEPLOY_USER', defaultValue: 'deploy', description: 'SSH 用户')
+    string(name: 'APP_RUN_USER', defaultValue: 'deploy', description: '须与 Supervisor user= 一致')
+    string(name: 'DEPLOY_SSH_PORT', defaultValue: '22', description: 'SSH 端口')
+    string(name: 'DEPLOY_PATH', defaultValue: '/opt/web-test', description: '远程安装目录')
+    string(name: 'APP_HTTP_PORT', defaultValue: '8088', description: '应用 HTTP 端口')
+    string(name: 'PROGRAM_NAME', defaultValue: 'web-test', description: 'Supervisor program 名')
+    string(name: 'SSH_CREDENTIALS_ID', defaultValue: 'web-test-deploy-ssh', description: 'Jenkins SSH 私钥凭据 ID')
+    string(name: 'APP_SUBDIR', defaultValue: 'web-test', description: '含 pom.xml 的子目录（独立仓填 .）')
+  }
+  stages {
+    stage('Prepare') {
+      steps {
+        sh """
+          echo "JAVA_HOME=\$JAVA_HOME"
+          java -version
+          mvn -version || true
+          test -f '${params.APP_SUBDIR}/pom.xml' || test -f pom.xml
+        """
+      }
+    }
+    stage('Test & Package') {
+      steps {
+        sh """
+          set -euo pipefail
+          ROOT='.'
+          if [ -f '${params.APP_SUBDIR}/pom.xml' ]; then ROOT='${params.APP_SUBDIR}'; fi
+          cd "\$ROOT"
+          if command -v mvn >/dev/null 2>&1; then
+            mvn -B clean package
+          elif [ -x ./mvnw ]; then
+            ./mvnw -B clean package
+          else
+            echo "mvn/mvnw not found" >&2
+            exit 1
+          fi
+        """
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
+          archiveArtifacts artifacts: '**/target/web-test-*.jar', fingerprint: true, allowEmptyArchive: true
+        }
+      }
+    }
+    stage('Smoke jar (local)') {
+      steps {
+        sh """
+          set -euo pipefail
+          ROOT='.'
+          if [ -f '${params.APP_SUBDIR}/pom.xml' ]; then ROOT='${params.APP_SUBDIR}'; fi
+          JAR=\$(ls "\$ROOT"/target/web-test-*.jar | grep -v original | head -n1)
+          echo "jar=\$JAR"
+          java -jar "\$JAR" --server.port=18080 > /tmp/web-test-ci.log 2>&1 &
+          PID=\$!
+          trap "kill \$PID 2>/dev/null || true" EXIT
+          for i in \$(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/hello | grep -q hello; then
+              echo smoke ok
+              exit 0
+            fi
+            sleep 2
+          done
+          echo smoke failed >&2
+          cat /tmp/web-test-ci.log || true
+          exit 1
+        """
+      }
+    }
+    stage('Deploy remote (Supervisor)') {
+      when {
+        expression { return params.DEPLOY_TO_REMOTE }
+      }
+      steps {
+        script {
+          if (!params.DEPLOY_HOST?.trim()) {
+            error 'DEPLOY_TO_REMOTE=true 时必须填写 DEPLOY_HOST'
+          }
+        }
+        sh """
+          set -euo pipefail
+          ROOT='.'
+          if [ -f '${params.APP_SUBDIR}/pom.xml' ]; then ROOT='${params.APP_SUBDIR}'; fi
+          JAR=\$(ls "\$ROOT"/target/web-test-*.jar | grep -v original | head -n1)
+          cp -f "\$JAR" /tmp/web-test-deploy.jar
+          ls -lh /tmp/web-test-deploy.jar
+        """
+        withCredentials([sshUserPrivateKey(
+          credentialsId: params.SSH_CREDENTIALS_ID,
+          keyFileVariable: 'SSH_KEY_FILE',
+          usernameVariable: 'SSH_USER_FROM_CRED'
+        )]) {
+          sh """
+            set -euo pipefail
+            export DEPLOY_HOST='${params.DEPLOY_HOST}'
+            export DEPLOY_USER='${params.DEPLOY_USER}'
+            export APP_RUN_USER='${params.APP_RUN_USER}'
+            export DEPLOY_PORT='${params.DEPLOY_SSH_PORT}'
+            export DEPLOY_PATH='${params.DEPLOY_PATH}'
+            export APP_HTTP_PORT='${params.APP_HTTP_PORT}'
+            export PROGRAM_NAME='${params.PROGRAM_NAME}'
+            export JAR_FILE=/tmp/web-test-deploy.jar
+            export SSH_IDENTITY_FILE="\${SSH_KEY_FILE}"
+            if [ -f deploy/02-supervisor/deploy-via-ssh.sh ]; then
+              bash deploy/02-supervisor/deploy-via-ssh.sh
+            elif [ -f ci/deploy-via-ssh.sh ]; then
+              bash ci/deploy-via-ssh.sh
+            else
+              echo "找不到 deploy-via-ssh.sh" >&2
+              exit 1
+            fi
+          """
+        }
+      }
+    }
+  }
+  post {
+    always {
+      sh 'rm -f /tmp/web-test-deploy.jar || true'
+    }
+  }
+}

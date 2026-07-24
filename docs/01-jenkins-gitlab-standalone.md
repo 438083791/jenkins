@@ -315,7 +315,7 @@ sudo gitlab-ctl tail
 
 学完本方案结构后，可进入：
 
-- [方案二：Jenkins + GitLab + Supervisor](./02-jenkins-gitlab-supervisor.md) — 用进程管理器统一托管、加强自愈与日志规范  
+- [方案二：Jenkins + GitLab + Supervisor](./02-jenkins-gitlab-supervisor.md) — Push→构建上传→Supervisor 统一管业务应用启停  
 - 或直接对比 [方案三 Docker 化](./03-jenkins-gitlab-docker.md) 看抽象层差异  
 - 若要把配置收进**本示例仓库根目录**（Jenkinsfile / `jenkins/casc`），见 [方案五：项目内 Jenkins 配置](./05-jenkins-project-local.md)  
 - 虚拟机上同时准备构建 JDK 与 Jenkins 运行 JDK：见 [同时安装 JDK 8 与 JDK 17](./06-install-jdk8-and-jdk17.md)

@@ -234,7 +234,7 @@ node {
 ## 11. 相关文档
 
 - [方案一：独立服务器部署](./01-jenkins-gitlab-standalone.md)  
-- [方案二：Supervisor 部署](./02-jenkins-gitlab-supervisor.md)  
+- [方案二：Jenkins 打包上传 + Supervisor 管应用](./02-jenkins-gitlab-supervisor.md)  
 - [方案三：Docker Compose 部署](./03-jenkins-gitlab-docker.md)  
 - [方案四：Docker + Kubernetes](./04-jenkins-gitlab-docker-k8s.md)  
 - [同时安装 JDK 8 与 JDK 17](./06-install-jdk8-and-jdk17.md)  

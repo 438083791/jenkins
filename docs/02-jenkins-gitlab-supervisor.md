@@ -1,6 +1,7 @@
 # 方案二：Jenkins + GitLab + Supervisor 部署
 
-> **目标**：在保留「可观察进程模型」的前提下，引入 [Supervisor](http://supervisord.org/) 统一托管 Jenkins（及可选辅助进程），实现异常退出自动拉起、统一日志与启停规范；GitLab 仍可用 Omnibus 自管，或将部分 sidecar（如 webhook 转发、备份脚本）交由 Supervisor。
+> **目标**：打通「代码提交 → 自动构建 → 上传目标机 → Supervisor 统一管应用启停」的交付链路。  
+> GitLab 管代码与通知，Jenkins 管打包与上传，**Supervisor 只托管业务应用进程**（不托管 Jenkins / GitLab）。
 
 ---
 
@@ -8,305 +9,270 @@
 
 | 项 | 说明 |
 |---|---|
-| 适用场景 | 学习进程守护；中小规模、暂未上 Docker 的机房/虚机环境 |
-| 相对方案一 | 增加进程监督层，强化「自愈 + 日志汇聚 + 统一运维入口」 |
-| 典型拓扑 | 服务器 A：GitLab（Omnibus）；服务器 B：Jenkins（由 Supervisor 拉起） |
-| 可选增强 | 同机再用 Supervisor 管 `nginx` 反代、备份脚本、简单 Agent |
+| 适用场景 | 虚机/物理机交付 Java（或其它常驻）应用；暂未上 Docker |
+| 相对方案一 | 方案一侧重 Jenkins 自身安装与目录；本方案补齐 **构建产物如何上线并由进程管理器守护** |
+| 典型拓扑 | A：GitLab；B：Jenkins；C：应用机（Supervisor 管 `web-test` 等） |
 | **配置目录** | [`deploy/02-supervisor/`](../deploy/02-supervisor/) |
 
-**定位澄清**：GitLab Omnibus 自带 runit，一般 **不必** 再用 Supervisor 包一层 GitLab；本方案重点把 **Jenkins 及周边自研进程** 纳入 Supervisor。
+**标准流程（本方案核心）**
+
+```text
+用户 git push
+    → GitLab 收到提交
+    → Webhook 通知 Jenkins
+    → Jenkins：检出 → 编译打包 → 上传产物到应用机
+    → 应用机：Supervisor 重启/拉起程序（统一启停与自愈）
+```
+
+**边界澄清**
+
+| 组件 | 谁管进程 | 本方案职责 |
+|---|---|---|
+| GitLab | Omnibus 自带 runit | 仓库 + Webhook |
+| Jenkins | systemd / 官方包（同方案一） | CI：构建、归档、SSH 上传 |
+| 业务应用（如 web-test） | **Supervisor** | 常驻运行、崩溃重启、日志 |
+
+不要用 Supervisor 再包一层 GitLab/Jenkins——两者已有成熟进程模型；Supervisor 的价值在 **统一管理多业务程序**。
 
 ---
 
 ## 2. 架构图
 
 ```text
-┌──────────────────────┐                      ┌─────────────────────────────────┐
-│  服务器 A：GitLab    │      Webhook/API     │  服务器 B                        │
-│  (Omnibus + runit)   │ ───────────────────► │  Supervisor (supervisord)        │
-│                      │                      │    ├─ program: jenkins          │
-│  Git 仓库 / Token    │ ◄──── clone/ssh ──── │    ├─ program: nginx (可选)     │
-└──────────────────────┘                      │    └─ program: backup (可选)    │
-                                              │           │                     │
-                                              │           ▼                     │
-                                              │     JENKINS_HOME / 日志目录      │
-                                              └─────────────────────────────────┘
+┌────────────────────┐   Webhook    ┌────────────────────┐
+│ 服务器 A：GitLab   │ ───────────► │ 服务器 B：Jenkins  │
+│ 仓库 / Token       │ ◄── clone ── │ mvn package        │
+└────────────────────┘              │ scp jar 到 C       │
+                                    └─────────┬──────────┘
+                                              │ SSH / scp
+                                              ▼
+                                    ┌────────────────────┐
+                                    │ 服务器 C：应用机    │
+                                    │  Supervisor         │
+                                    │    └─ program:      │
+                                    │       web-test      │
+                                    │  /opt/web-test/     │
+                                    │  /opt/app-logs/     │
+                                    └────────────────────┘
 ```
 
----
-
-## 3. 为什么加 Supervisor？
-
-| 能力 | systemd  alone | + Supervisor |
-|---|---|---|
-| 崩溃自动重启 | 可以 | 可以，配置更细（次数、间隔、backoff） |
-| 多自研程序统一管理 | 每个写一个 unit | 一个 conf 目录集中管理 |
-| 日志 | journald | 可指定 stdout/stderr 文件，易按任务切割 |
-| 非 root 用户启停 | 需 polkit / sudo | `supervisorctl` 权限模型清晰 |
-| 学习成本 | 偏低 | 进程管理通用技能（许多历史 Python/Java 服务仍在用） |
-
-与方案一对比：方案一用 `systemctl` 管官方 `jenkins` 包；本方案改为 **Supervisor 直接 `java -jar jenkins.war`**（或包装脚本），便于看清 JVM 启动参数与工作目录。
+演示可将 B/C 合并为一台机；生产建议 Jenkins 与业务应用分离。
 
 ---
 
-## 4. 环境准备
+## 3. 环境准备
 
-| 组件 | 建议 |
+| 角色 | 组件建议 |
 |---|---|
-| OS | Ubuntu 22.04 LTS |
-| Python / Supervisor | `supervisor` 包（或 pip 安装 supervisord ≥ 4.x） |
-| JDK | OpenJDK 17 |
-| Jenkins | 官方 `jenkins.war`（LTS） |
-| GitLab | 同方案一，Omnibus CE |
+| A GitLab | Omnibus CE（同[方案一](./01-jenkins-gitlab-standalone.md)） |
+| B Jenkins | 官方包或方案一 / 方案五无 Docker 安装；JDK17/21 跑 Jenkins，JDK8 编应用 |
+| C 应用机 | OpenJDK 8（跑 Spring Boot 示例）、Supervisor、openssh-server |
 
-目录规划（服务器 B）：
+应用机目录规划：
 
 ```text
-/opt/ci/
-├── jenkins/
-│   ├── jenkins.war
-│   ├── start-jenkins.sh
-│   └── home/                 # JENKINS_HOME
-├── logs/
-│   ├── jenkins.out.log
-│   └── jenkins.err.log
-└── supervisor/
-    └── jenkins.conf          # 可 symlink 到 /etc/supervisor/conf.d/
+/opt/web-test/
+├── web-test.jar          # Jenkins 每次覆盖上传
+└── start-app.sh          # Supervisor command
+/opt/app-logs/
+├── web-test.out.log
+└── web-test.err.log
+/etc/supervisor/conf.d/
+└── web-test.conf
 ```
 
 ---
 
-## 5. GitLab 侧（复用方案一）
+## 4. GitLab 侧
 
-部署步骤与目录含义见 [方案一](./01-jenkins-gitlab-standalone.md) 第 4 节。本方案不改 GitLab 进程模型，仅保证：
+1. 创建项目，推送含 `pom.xml` / `Jenkinsfile` 的代码（可用 [`web-test/`](../web-test/)）  
+2. 为 Jenkins 准备 Deploy Token 或 SSH Deploy Key（只读 Clone）  
+3. 项目 → Settings → Webhooks：URL 指向 Jenkins Job 触发地址（安装 GitLab 插件后形如 `http://<jenkins>:8080/project/<job>`）  
+4. Push 事件勾选；Secret Token 与 Jenkins 侧一致  
 
-1. Webhook 能打到 Jenkins（经 Nginx 反代或直连 Supervisor 暴露端口）  
-2. Token / Deploy Key 已为 Jenkins 准备好  
-
-若需将 **自定义 webhook 转发脚本**、**定时 `gitlab-backup` 包装脚本** 纳入 Supervisor，见第 8 节示例。
-
----
-
-## 6. Jenkins + Supervisor 部署步骤
-
-### 6.1 安装依赖
-
-```bash
-sudo apt-get update
-sudo apt-get install -y openjdk-17-jdk git curl supervisor
-sudo id -u jenkins >/dev/null 2>&1 || sudo useradd -r -m -d /opt/ci/jenkins/home -s /bin/bash jenkins
-sudo mkdir -p /opt/ci/jenkins /opt/ci/logs
-sudo chown -R jenkins:jenkins /opt/ci
-```
-
-### 6.2 下载 Jenkins WAR
-
-```bash
-sudo -u jenkins curl -L -o /opt/ci/jenkins/jenkins.war \
-  https://get.jenkins.io/war-stable/latest/jenkins.war
-```
-
-### 6.3 启动脚本
-
-`/opt/ci/jenkins/start-jenkins.sh`：
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-export JENKINS_HOME=/opt/ci/jenkins/home
-export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}
-exec "${JAVA_HOME}/bin/java" \
-  -Xms512m -Xmx1024m \
-  -Dhudson.lifecycle=hudson.lifecycle.ExitLifecycle \
-  -jar /opt/ci/jenkins/jenkins.war \
-  --httpPort=8080 \
-  --httpListenAddress=0.0.0.0
-```
-
-```bash
-sudo chmod +x /opt/ci/jenkins/start-jenkins.sh
-sudo chown jenkins:jenkins /opt/ci/jenkins/start-jenkins.sh
-```
-
-> `ExitLifecycle`：方便通过退出码让 Supervisor 判定并重启；生产可按团队规范调整。
-
-### 6.4 Supervisor 程序配置
-
-`/etc/supervisor/conf.d/jenkins.conf`：
-
-```ini
-[program:jenkins]
-command=/opt/ci/jenkins/start-jenkins.sh
-directory=/opt/ci/jenkins/home
-user=jenkins
-autostart=true
-autorestart=true
-startsecs=10
-startretries=3
-stopwaitsecs=60
-stopsignal=TERM
-redirect_stderr=false
-stdout_logfile=/opt/ci/logs/jenkins.out.log
-stdout_logfile_maxbytes=50MB
-stdout_logfile_backups=10
-stderr_logfile=/opt/ci/logs/jenkins.err.log
-stderr_logfile_maxbytes=50MB
-stderr_logfile_backups=10
-environment=JENKINS_HOME="/opt/ci/jenkins/home",LANG="en_US.UTF-8"
-```
-
-加载并启动：
-
-```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-sudo supervisorctl status jenkins
-sudo supervisorctl tail -f jenkins
-```
-
-浏览器访问 `http://<jenkins-host>:8080`，初始密码仍在：
-
-```text
-$JENKINS_HOME/secrets/initialAdminPassword
-```
-
-即 `/opt/ci/jenkins/home/secrets/initialAdminPassword`。
+详情与 Token 配置可对照[方案一第 6 节](./01-jenkins-gitlab-standalone.md)。
 
 ---
 
-## 7. 常用运维命令
+## 5. Jenkins 侧
 
-```bash
-# 状态 / 启停 / 重启
-sudo supervisorctl status
-sudo supervisorctl stop jenkins
-sudo supervisorctl start jenkins
-sudo supervisorctl restart jenkins
+### 5.1 安装与工具
 
-# 看日志
-sudo supervisorctl tail -f jenkins stdout
-sudo supervisorctl tail -f jenkins stderr
+- 安装方式复用方案一或 [`deploy/05-project-local/without-docker/`](../deploy/05-project-local/without-docker/)  
+- 工具：`jdk8`、`maven3`（名称需与 Pipeline `tools {}` 一致）  
+- 插件：GitLab Plugin（Webhook）、Credentials Binding（SSH 私钥）  
+- 系统包：`openssh-client`
 
-# 配置变更后
-sudo supervisorctl reread && sudo supervisorctl update
-```
+### 5.2 SSH 凭据
 
-与方案一对照学习：
+1. 在应用机执行一次 `setup-deploy-ssh-key.sh`（见第 6 节）  
+2. Jenkins → Credentials → **SSH Username with private key**  
+   - ID：`web-test-deploy-ssh`  
+   - Username：与应用机 `DEPLOY_USER` 一致（默认 `deploy`）  
+   - Private Key：目标机生成的私钥全文  
 
-| 操作 | 方案一（systemd 包） | 本方案（Supervisor） |
+### 5.3 Pipeline
+
+使用本方案部署脚本（**走 Supervisor，不是 systemd**）：
+
+- 示例：[`deploy/02-supervisor/Jenkinsfile.example`](../deploy/02-supervisor/Jenkinsfile.example)  
+- 部署脚本：[`deploy/02-supervisor/deploy-via-ssh.sh`](../deploy/02-supervisor/deploy-via-ssh.sh)  
+
+若独立仓是 `web-test/`，可将 `Jenkinsfile.example` 拷到仓库根，并把 `ci/deploy-via-ssh.sh` 换成指向本方案脚本，或保持 Script Path 指向本仓库路径。
+
+Job 关键参数：
+
+| 参数 | 说明 | 示例 |
 |---|---|---|
-| 改端口 / 堆内存 | `/etc/default/jenkins` | `start-jenkins.sh` + conf `environment` |
-| 看主目录 | `/var/lib/jenkins` | `/opt/ci/jenkins/home` |
-| 查进程 | `systemctl status jenkins` | `supervisorctl status` + `ps` |
+| `DEPLOY_TO_REMOTE` | 是否部署 | `true` |
+| `DEPLOY_HOST` | 应用机 | `192.168.122.144` |
+| `DEPLOY_USER` | SSH 用户 | `deploy` |
+| `APP_RUN_USER` | Supervisor `user=` | `deploy` |
+| `DEPLOY_PATH` | 安装目录 | `/opt/web-test` |
+| `APP_HTTP_PORT` | 应用端口 | `8088` |
+| `SSH_CREDENTIALS_ID` | 凭据 ID | `web-test-deploy-ssh` |
 
-`JENKINS_HOME` 内部结构不变，目录含义仍按方案一第 5.2 节理解。
+构建阶段预期：
 
----
-
-## 8. 可选：同机辅助进程
-
-### 8.1 Nginx 反代（HTTPS 终结）
-
-```ini
-[program:nginx]
-command=/usr/sbin/nginx -g "daemon off;"
-autostart=true
-autorestart=true
-priority=10
-stdout_logfile=/opt/ci/logs/nginx.out.log
-stderr_logfile=/opt/ci/logs/nginx.err.log
-```
-
-### 8.2 GitLab 备份包装（跑在 GitLab 机）
-
-```ini
-[program:gitlab-backup-loop]
-command=/usr/local/bin/gitlab-backup-loop.sh
-autostart=true
-autorestart=true
-user=root
-stdout_logfile=/var/log/gitlab-backup-loop.out.log
-stderr_logfile=/var/log/gitlab-backup-loop.err.log
-```
-
-脚本内可用 `sleep` 循环或交给 `cron`；若任务纯定时，更推荐 **cron + 一次性命令**，Supervisor 适合「常驻进程」。
-
-### 8.3 轻量 Agent
-
-在 Agent 机用 Supervisor 拉起 JNLP / Inbound Agent：
-
-```ini
-[program:jenkins-agent]
-command=java -jar /opt/ci/agent/agent.jar -url http://jenkins:8080 -secret <SECRET> -name agent-1 -workDir /opt/ci/agent/work
-user=jenkins
-autostart=true
-autorestart=true
-stdout_logfile=/opt/ci/logs/agent.out.log
-stderr_logfile=/opt/ci/logs/agent.err.log
+```text
+Prepare → Test & Package → Smoke（Jenkins 节点本地）→ Deploy remote
+  Deploy：scp jar → 安装到 /opt/web-test
+       → supervisorctl restart web-test
+       → curl /hello
+       → supervisorctl status web-test（自动执行并校验 RUNNING，无需手工）
 ```
 
 ---
 
-## 9. GitLab ↔ Jenkins 联调
+## 6. 应用机：Supervisor 部署（只做一次）
 
-联调步骤与 Webhook / Pipeline 示例与 [方案一第 6 节](./01-jenkins-gitlab-standalone.md) 相同。注意：
+脚本目录：`deploy/02-supervisor/`。
 
-1. 若 Jenkins 只监听内网，GitLab Webhook URL 填内网可达地址  
-2. 若走 Nginx HTTPS，Webhook 使用 `https://ci.example.com/project/<job>`  
-3. 防火墙放行 Supervisor 对外服务端口（或仅放行 Nginx 的 443）
+```bash
+cd deploy/02-supervisor
+sudo bash install.sh
+# 分离运行用户与部署用户时：
+# sudo APP_USER=webapp DEPLOY_USER=deploy bash install.sh
+
+sudo bash setup-deploy-ssh-key.sh
+# sudo DEPLOY_USER=deploy bash setup-deploy-ssh-key.sh
+```
+
+`install.sh` 会：
+
+1. 安装 `openjdk-8-jdk`、`supervisor`、`curl`、`openssh-server`  
+2. 创建 `APP_USER` / `DEPLOY_USER` 与 `/opt/web-test`、`/opt/app-logs`  
+3. 安装 `start-app.sh`、`web-test.conf`、sudoers（允许 `supervisorctl` 等）  
+4. `supervisorctl reread && update`（首次无 jar 时可能 FATAL，属正常；首次 Jenkins 部署成功后变为 RUNNING）
+
+### 6.1 Supervisor 程序配置（摘要）
+
+`/etc/supervisor/conf.d/web-test.conf`：
+
+```ini
+[program:web-test]
+command=/opt/web-test/start-app.sh
+directory=/opt/web-test
+user=deploy
+autostart=true
+autorestart=true
+startsecs=5
+startretries=3
+stopwaitsecs=30
+stopsignal=TERM
+stdout_logfile=/opt/app-logs/web-test.out.log
+stderr_logfile=/opt/app-logs/web-test.err.log
+environment=APP_PORT="8088",JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64"
+```
+
+### 6.2 常用运维
+
+```bash
+# 封装脚本
+bash ctl.sh status
+bash ctl.sh restart
+bash ctl.sh logs
+
+# 或直接
+sudo supervisorctl status web-test
+sudo supervisorctl restart web-test
+sudo supervisorctl tail -f web-test
+```
+
+放行应用端口：
+
+```bash
+sudo ufw allow 8088/tcp
+```
 
 ---
 
-## 10. 升级与备份建议
+## 7. 端到端联调步骤
 
-**Jenkins 升级**
+1. 应用机：`install.sh` + SSH 密钥 → 私钥导入 Jenkins  
+2. Jenkins：建 Pipeline Job，Webhook 与 GitLab 打通  
+3. 本地改代码 → `git push` 到 GitLab  
+4. 确认 GitLab Webhook 返回 200，Jenkins 构建排队并成功  
+5. 在 Jenkins 控制台日志中确认已自动打印 `supervisorctl status web-test` 且为 RUNNING  
+6. （可选）本机再 `curl http://<应用机>:8088/hello` 复核  
 
-1. `supervisorctl stop jenkins`  
-2. 备份整个 `/opt/ci/jenkins/home`  
-3. 替换 `jenkins.war`  
-4. `supervisorctl start jenkins`  
-5. 观察日志与插件兼容性  
+排错：
 
-**备份清单**
-
-- `/opt/ci/jenkins/home`（配置、Job、插件、密钥）  
-- `/etc/supervisor/conf.d/*.conf`  
-- GitLab：`gitlab-backup create` + `/etc/gitlab/gitlab.rb`  
+| 现象 | 排查 |
+|---|---|
+| Webhook 失败 | Jenkins URL 是否 GitLab 可达；Secret；防火墙 8080 |
+| Clone 失败 | Deploy Key / Token；凭据 ID |
+| scp / SSH 失败 | 私钥、Username、`BatchMode`、目标机 `authorized_keys` |
+| supervisorctl 失败 | `/etc/sudoers.d/` 是否含 `supervisorctl`；program 名是否 `web-test` |
+| 探活失败 | `tail` 应用日志；JDK8 路径；`APP_PORT` 与 ufw |
 
 ---
 
-## 11. 优缺点与边界
+## 8. 与「方案五 remote + systemd」的关系
+
+| 项 | 方案五 `without-docker/remote` | 本方案 `02-supervisor` |
+|---|---|---|
+| 进程管理 | systemd `web-test.service` | Supervisor `program:web-test` |
+| 部署重启 | `systemctl restart` | `supervisorctl restart` |
+| 适用 | 已统一用 systemd 的环境 | 需 Supervisor 集中管多应用、或运维习惯 supervisord |
+
+二者 **上传 jar 的思路相同**，仅目标机守护方式不同；不要混用同一台机的两套 unit（除非 program/服务名与端口完全隔离）。
+
+---
+
+## 9. 优缺点与边界
 
 **优点**
 
-- 比纯 systemd 包安装更易自定义 JVM 与目录布局  
-- 统一管理多辅助进程，适合「半自动化」机房  
-- 仍可完整观察 `JENKINS_HOME`，学习价值不丢失  
+- 流程清晰：GitLab 通知、Jenkins 构建分发、Supervisor 管运行态  
+- 多应用可共用一个 supervisord，启停与日志入口统一  
+- 仍可不引入 Docker，适合教学与传统机房  
 
 **缺点**
 
-- 未解决依赖隔离与「镜像级」复现问题  
-- Supervisor 不管容器网络 / 存储编排  
-- GitLab Omnibus 与 Supervisor 两套进程世界观并存，需文档说清边界  
+- 无镜像级环境复现；依赖目标机 JDK/系统库  
+- Jenkins 与应用机 SSH/sudo 权限需认真收紧  
+- 多机扩容、灰度需自行约定目录与 program 命名  
 
-**何时升级到方案三**：出现「多环境一致交付」「一键拉起」「工具链污染」痛点时。
-
----
-
-## 12. 验收清单
-
-- [ ] `supervisorctl status jenkins` 为 RUNNING  
-- [ ] 杀掉 `java ... jenkins.war` 进程后，约数秒内被自动拉起  
-- [ ] 日志写入 `/opt/ci/logs/`，可 `tail`  
-- [ ] GitLab Push 能触发 Jenkins 构建  
-- [ ] 能说清：Omnibus(runit) vs Supervisor 各自管什么  
-- [ ] 完成一次 `jenkins.war` 替换升级演练  
+**何时到方案三**：需要「构建环境与运行环境一致、一键拉起多服务」时，再上 Docker Compose。
 
 ---
 
-## 13. 相关文档
+## 10. 验收清单
+
+- [ ] GitLab Push → Jenkins 自动构建成功  
+- [ ] Jenkins 将 jar 上传到 `/opt/web-test/web-test.jar`  
+- [ ] 部署阶段自动执行 `supervisorctl status web-test`，日志中为 RUNNING（失败则 Job 失败）  
+- [ ] 杀掉应用 Java 进程后，数秒内被 Supervisor 拉起  
+- [ ] 探活 `/hello` 成功（Pipeline 内已做）  
+- [ ] 能说清：GitLab / Jenkins / Supervisor **各自管什么**  
+
+---
+
+## 11. 相关文档
 
 - [方案一：独立服务器部署（结构深挖）](./01-jenkins-gitlab-standalone.md)  
 - [方案三：Docker 部署](./03-jenkins-gitlab-docker.md)  
 - [方案四：Docker + Kubernetes](./04-jenkins-gitlab-docker-k8s.md)  
 - [方案五：当前项目内 Jenkins 配置](./05-jenkins-project-local.md)  
+- 应用机脚本：[`deploy/02-supervisor/`](../deploy/02-supervisor/)  

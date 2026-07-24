@@ -317,10 +317,10 @@ http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
 
 ## 10. 与前三方案对比
 
-| 维度 | 方案一 裸机 | 方案二 Supervisor | 方案三 Compose | 本方案 K8s |
+| 维度 | 方案一 裸机 | 方案二 Supervisor 管应用 | 方案三 Compose | 本方案 K8s |
 |---|---|---|---|---|
-| 学习重点 | Jenkins 文件与进程 | 进程守护 | 镜像/卷/网络 | 调度、弹性、RBAC |
-| Agent 弹性 | 手工加节点 | 手工 + 守护 | 固定容器 | Pod 按需创建 |
+| 学习重点 | Jenkins 文件与进程 | 构建分发 + 应用守护 | 镜像/卷/网络 | 调度、弹性、RBAC |
+| Agent 弹性 | 手工加节点 | 手工节点 | 固定容器 | Pod 按需创建 |
 | 复杂度 | 低 | 低-中 | 中 | 高 |
 | HA / 多租户 | 弱 | 弱 | 弱 | 可设计较强 |
 | 资源门槛 | 低 | 低 | 中 | 高 |
@@ -371,6 +371,6 @@ http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
 ## 14. 相关文档
 
 - [方案一：独立服务器部署](./01-jenkins-gitlab-standalone.md)  
-- [方案二：Supervisor 部署](./02-jenkins-gitlab-supervisor.md)  
+- [方案二：Jenkins 打包上传 + Supervisor 管应用](./02-jenkins-gitlab-supervisor.md)  
 - [方案三：Docker Compose 部署](./03-jenkins-gitlab-docker.md)  
 - [方案五：当前项目内 Jenkins 配置](./05-jenkins-project-local.md)  

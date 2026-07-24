@@ -331,6 +331,6 @@ docker stats
 ## 13. 相关文档
 
 - [方案一：独立服务器（结构学习）](./01-jenkins-gitlab-standalone.md)  
-- [方案二：Supervisor 进程守护](./02-jenkins-gitlab-supervisor.md)  
+- [方案二：Jenkins 打包上传 + Supervisor 管应用](./02-jenkins-gitlab-supervisor.md)  
 - [方案四：Docker + Kubernetes](./04-jenkins-gitlab-docker-k8s.md)  
 - [方案五：当前项目内 Jenkins 配置（推荐作本仓本地入口）](./05-jenkins-project-local.md)  
