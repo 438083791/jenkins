@@ -162,8 +162,8 @@ sudo bash setup-deploy-ssh-key.sh
 
 1. 安装 `openjdk-8-jdk`、`supervisor`、`curl`、`openssh-server`  
 2. 创建 `APP_USER` / `DEPLOY_USER` 与 `/opt/web-test`、`/opt/app-logs`  
-3. 安装 `start-app.sh`、`web-test.conf`、sudoers（允许 `supervisorctl` 等）  
-4. `supervisorctl reread && update`（首次无 jar 时可能 FATAL，属正常；首次 Jenkins 部署成功后变为 RUNNING）
+3. 安装 `start-app.sh`、`web-test.conf`、Web UI（默认 `9001`）、sudoers  
+4. 重启 supervisord 并加载配置（首次无 jar 时 status 可能 FATAL；Jenkins 上传后变为 RUNNING）
 
 ### 6.1 Supervisor 程序配置（摘要）
 
@@ -185,7 +185,28 @@ stderr_logfile=/opt/app-logs/web-test.err.log
 environment=APP_PORT="8088",JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64"
 ```
 
-### 6.2 常用运维
+### 6.2 Supervisor Web UI
+
+`install.sh` 默认启用 HTTP 管理界面（配置见 `inet-http-server.conf`）：
+
+| 项 | 默认 |
+|---|---|
+| URL | `http://<应用机>:9001/` |
+| 用户 / 密码 | `admin` / `admin` |
+
+```bash
+# 改密码 / 端口后重装配置（可重复执行）
+sudo SUPERVISOR_HTTP_PASSWORD='换成强密码' bash install.sh
+
+# 关闭 UI
+sudo ENABLE_SUPERVISOR_UI=0 bash install.sh
+
+sudo ufw allow 9001/tcp
+```
+
+> 演示默认口令请尽快改掉；生产建议仅内网访问或前面加反向代理 + HTTPS。
+
+### 6.3 常用运维
 
 ```bash
 # 封装脚本

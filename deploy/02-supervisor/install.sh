@@ -15,6 +15,12 @@ JAVA8_HOME="${JAVA8_HOME:-/usr/lib/jvm/java-8-openjdk-amd64}"
 APP_PORT="${APP_PORT:-8088}"
 PROGRAM_NAME="${PROGRAM_NAME:-web-test}"
 SKIP_APT="${SKIP_APT:-0}"
+# Supervisor Web UI（inet_http_server）
+ENABLE_SUPERVISOR_UI="${ENABLE_SUPERVISOR_UI:-1}"
+SUPERVISOR_HTTP_PORT="${SUPERVISOR_HTTP_PORT:-9001}"
+SUPERVISOR_HTTP_USER="${SUPERVISOR_HTTP_USER:-admin}"
+SUPERVISOR_HTTP_PASSWORD="${SUPERVISOR_HTTP_PASSWORD:-admin}"
+SUPERVISOR_HTTP_BIND="${SUPERVISOR_HTTP_BIND:-0.0.0.0}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "请使用 root 或 sudo 运行" >&2
@@ -114,7 +120,30 @@ sed -i "s|^\[program:.*\]|[program:${PROGRAM_NAME}]|g" "${tmp_conf}"
 install -m 0644 "${tmp_conf}" "/etc/supervisor/conf.d/${PROGRAM_NAME}.conf"
 rm -f "${tmp_conf}"
 
-# ---------- 4) sudoers：部署用户可 supervisorctl / 安装 jar ----------
+# ---------- 4) Supervisor Web UI ----------
+UI_CONF="/etc/supervisor/conf.d/inet-http-server.conf"
+if [[ "${ENABLE_SUPERVISOR_UI}" == "1" ]]; then
+  tmp_ui="$(mktemp)"
+  if [[ -f "${SCRIPT_DIR}/inet-http-server.conf" ]]; then
+    tr -d '\r' < "${SCRIPT_DIR}/inet-http-server.conf" > "${tmp_ui}"
+  else
+    cat > "${tmp_ui}" <<EOF
+[inet_http_server]
+port=${SUPERVISOR_HTTP_BIND}:${SUPERVISOR_HTTP_PORT}
+username=${SUPERVISOR_HTTP_USER}
+password=${SUPERVISOR_HTTP_PASSWORD}
+EOF
+  fi
+  sed -i -E "s|^port=.*|port=${SUPERVISOR_HTTP_BIND}:${SUPERVISOR_HTTP_PORT}|g" "${tmp_ui}"
+  sed -i -E "s|^username=.*|username=${SUPERVISOR_HTTP_USER}|g" "${tmp_ui}"
+  sed -i -E "s|^password=.*|password=${SUPERVISOR_HTTP_PASSWORD}|g" "${tmp_ui}"
+  install -m 0644 "${tmp_ui}" "${UI_CONF}"
+  rm -f "${tmp_ui}"
+else
+  rm -f "${UI_CONF}"
+fi
+
+# ---------- 5) sudoers：部署用户可 supervisorctl / 安装 jar ----------
 if [[ -f "${SCRIPT_DIR}/sudoers-web-test.example" ]]; then
   tmp_sudo="$(mktemp)"
   tr -d '\r' < "${SCRIPT_DIR}/sudoers-web-test.example" \
@@ -127,8 +156,18 @@ if [[ -f "${SCRIPT_DIR}/sudoers-web-test.example" ]]; then
   rm -f "${tmp_sudo}"
 fi
 
-supervisorctl reread
-supervisorctl update
+# inet_http_server 变更需重启 supervisord（仅 reread/update 不够）
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files supervisor.service >/dev/null 2>&1; then
+  systemctl restart supervisor || systemctl restart supervisord || true
+elif command -v service >/dev/null 2>&1; then
+  service supervisor restart || service supervisord restart || true
+else
+  supervisorctl reload || true
+fi
+
+sleep 1
+supervisorctl reread || true
+supervisorctl update || true
 supervisorctl status "${PROGRAM_NAME}" || true
 
 echo
@@ -139,7 +178,13 @@ echo "运行用户: ${APP_USER}"
 echo "部署用户: ${DEPLOY_USER}"
 echo "program: ${PROGRAM_NAME}"
 echo "JAVA8: ${JAVA8_HOME}"
-echo "端口: ${APP_PORT}"
+echo "应用端口: ${APP_PORT}"
+if [[ "${ENABLE_SUPERVISOR_UI}" == "1" ]]; then
+  echo "Supervisor UI: http://<应用机IP>:${SUPERVISOR_HTTP_PORT}/  用户 ${SUPERVISOR_HTTP_USER} / 密码见 SUPERVISOR_HTTP_PASSWORD"
+  echo "放行端口示例: sudo ufw allow ${SUPERVISOR_HTTP_PORT}/tcp"
+else
+  echo "Supervisor UI: 已关闭（ENABLE_SUPERVISOR_UI=0）"
+fi
 echo "启停: supervisorctl {start|stop|restart} ${PROGRAM_NAME}"
 echo "或: bash ${SCRIPT_DIR}/ctl.sh status"
 echo
