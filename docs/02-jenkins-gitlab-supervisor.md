@@ -3,6 +3,8 @@
 > **目标**：打通「代码提交 → 自动构建 → 上传目标机 → Supervisor 统一管应用启停」的交付链路。  
 > GitLab 管代码与通知，Jenkins 管打包与上传，**Supervisor 只托管业务应用进程**（不托管 Jenkins / GitLab）。
 
+> **配套博文**：[Jenkins + GitLab + Supervisor 一键部署](https://blog.csdn.net/tadexinnian/article/details/163164244)
+
 ---
 
 ## 1. 方案概述

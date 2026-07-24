@@ -1,5 +1,7 @@
 # 无 Docker：SSH 部署 web-test 到另一台机器
 
+> **配套博文**：[Jenkins + Java + Maven + SSH 流水线一键部署](https://blog.csdn.net/tadexinnian/article/details/162897684)
+
 ## 角色说明（重要）
 
 | 角色 | 变量 | 作用 | 默认（本仓库演示） |

@@ -2,6 +2,8 @@
 
 > **目标**：在两台（或多台）独立机器上分别部署 GitLab 与 Jenkins，走通「代码托管 → Webhook → 构建」全链路，深入理解 Jenkins 目录结构、配置模型、插件体系与 Job 执行细节。
 
+> **配套博文**：[Jenkins + Java + Gitlab 流水线一键部署](https://blog.csdn.net/tadexinnian/article/details/162961532)
+
 ---
 
 ## 1. 方案概述

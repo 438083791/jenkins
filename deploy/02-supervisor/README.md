@@ -1,7 +1,8 @@
 # 方案二：GitLab → Jenkins 打包上传 → Supervisor 管应用
 
 > 详细说明见 [`docs/02-jenkins-gitlab-supervisor.md`](../../docs/02-jenkins-gitlab-supervisor.md)。  
-> **Supervisor 托管的是业务应用，不是 Jenkins。**
+> **Supervisor 托管的是业务应用，不是 Jenkins。**  
+> **配套博文**：[Jenkins + GitLab + Supervisor 一键部署](https://blog.csdn.net/tadexinnian/article/details/163164244)
 
 ## 流程
 
