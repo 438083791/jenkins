@@ -1,5 +1,5 @@
 jenkins:
-  systemMessage: "Jenkins (scheme 03 docker compose) — edit deploy/03-docker/casc to customize"
+  systemMessage: "Jenkins scheme-03 (Compose, JDK21) — GitLab webhook → build → docker deploy"
   numExecutors: 2
   mode: NORMAL
 

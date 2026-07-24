@@ -5,3 +5,7 @@ gitlab-plugin:1.9.16
 credentials-binding
 timestamper
 pipeline-stage-view
+docker-workflow
+docker-plugin
+docker-commons
+job-dsl

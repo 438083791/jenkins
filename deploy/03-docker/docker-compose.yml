@@ -1,3 +1,4 @@
+# 方案三：GitLab + Jenkins（JDK21）同一 Compose 网络；Jenkins 可 docker build / run 部署应用
 services:
   gitlab:
     image: ${GITLAB_IMAGE:-gitlab/gitlab-ce:17.11.0-ce.0}
@@ -25,23 +26,30 @@ services:
       start_period: 300s
 
   jenkins:
-    image: ${JENKINS_IMAGE:-jenkins/jenkins:2.568.1-lts-jdk21}
+    build:
+      context: ./jenkins
+    image: ${JENKINS_IMAGE_NAME:-my-project-jenkins:scheme03}
     environment:
       TZ: ${TZ:-Asia/Shanghai}
+      # Pipeline 冒烟/常驻容器加入同一 Docker 网络后，用容器名访问
+      JENKINS_DOCKER_NETWORK: ${JENKINS_DOCKER_NETWORK:-ci-net}
       JAVA_OPTS: "-Djenkins.install.runSetupWizard=true"
     ports:
       - "${JENKINS_HTTP_PORT:-8080}:8080"
       - "${JENKINS_AGENT_PORT:-50000}:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      # 若 Pipeline 需调用宿主机 Docker，取消下一行注释（注意安全风险）
-      # - /var/run/docker.sock:/var/run/docker.sock
+      # 使用宿主机 Docker Engine（Maven docker agent / docker build / docker run 部署）
+      # 安全风险：等同授予容器操控宿主机 Docker 的权限；实验环境可用
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-0}"
     networks: [ci-net]
     restart: unless-stopped
-    user: "1000:1000"
 
 networks:
   ci-net:
+    name: ${COMPOSE_NETWORK_NAME:-ci-net}
     driver: bridge
 
 volumes:

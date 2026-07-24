@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 方案三：启动 / 停止 / 查看状态
+# 方案三：启动 / 停止 GitLab + Jenkins（JDK21 自定义镜像，支持 Docker 部署）
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
@@ -9,12 +9,28 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
+# Linux：把容器用户加入宿主机 docker 组，避免 docker.sock permission denied
+if [[ -z "${DOCKER_GID:-}" ]] && [[ -S /var/run/docker.sock ]]; then
+  if command -v stat >/dev/null 2>&1; then
+    DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || stat -f '%g' /var/run/docker.sock 2>/dev/null || echo 0)"
+    export DOCKER_GID
+  fi
+fi
+if [[ -n "${DOCKER_GID:-}" ]] && ! grep -q '^DOCKER_GID=' .env 2>/dev/null; then
+  echo "DOCKER_GID=${DOCKER_GID}" >> .env
+fi
+
 ACTION="${1:-up}"
 case "${ACTION}" in
   up)
-    docker compose pull
-    docker compose up -d
+    # 构建带 JDK21 + docker CLI 的 Jenkins 镜像，再拉起 GitLab
+    docker compose up -d --build
     docker compose ps
+    echo
+    echo "Jenkins: http://localhost:\${JENKINS_HTTP_PORT:-8080} （见 .env）"
+    echo "GitLab:  http://localhost:\${GITLAB_HTTP_PORT:-80} （external_url 见 GITLAB_HOSTNAME）"
+    echo "密码:    bash compose.sh passwords"
+    echo "流水线:  Script Path 可用 deploy/03-docker/Jenkinsfile.example"
     ;;
   down)
     docker compose down
