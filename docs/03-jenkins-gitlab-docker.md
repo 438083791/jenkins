@@ -34,6 +34,8 @@
 
 ## 2. 架构图
 
+![方案三：GitLab + Jenkins Compose 与 Docker 部署架构](./images/03-jenkins-gitlab-docker-architecture.png)
+
 ```text
                      docker network: ci-net
  ┌────────────────────────────────────────────────────────────┐
