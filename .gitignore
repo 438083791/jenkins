@@ -9,5 +9,9 @@ deploy/**/env.sh
 **/*.key
 **/secrets/
 !**/secrets/.gitkeep
+
+# kubeadm Worker 加入脚本（含 token，由 install-k8s-master.sh 生成）
+deploy/04-k8s/worker-join.sh
+
 jenkins.zip
 web-test//

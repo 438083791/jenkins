@@ -25,7 +25,7 @@
 | [01-standalone](./01-standalone/) | 独立服务器 | `install-gitlab.sh`；Jenkins 见上表 → 05 |
 | [02-supervisor](./02-supervisor/) | GitLab→Jenkins 打包上传→Supervisor 管应用 | 应用机 `install.sh`；Jenkins 用 `deploy-via-ssh.sh` |
 | [03-docker](./03-docker/) | Docker Compose：GitLab+Jenkins(JDK21)→构建→Docker 部署 | `compose.sh up`；流水线 `Jenkinsfile.example` |
-| [04-k8s](./04-k8s/) | Kubernetes | `check-cluster.sh` → `install-jenkins.sh`（K8s 专用，与 05 宿主机脚本不同） |
+| [04-k8s](./04-k8s/) | Kubernetes | `install-k8s.sh master` + 两台 `worker`（一主两从）→ `check-cluster.sh` → `install-jenkins.sh` |
 | [05-project-local](./05-project-local/) | 本仓库 CI（web-test） | **有 Docker** `with-docker/up.sh` / **无 Docker** `without-docker/install-*.sh` |
 
 根目录流水线：

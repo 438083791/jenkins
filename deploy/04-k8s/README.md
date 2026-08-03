@@ -1,0 +1,159 @@
+# 方案四：Kubernetes 集群（一主两从）+ Jenkins / GitLab
+
+> 详细说明见 [`docs/04-jenkins-gitlab-docker-k8s.md`](../../docs/04-jenkins-gitlab-docker-k8s.md)。
+
+本目录提供 **kubeadm 一主两从** 安装脚本（1 个 Master + 2 个 Worker），装完再部署 Jenkins / GitLab。
+
+## 拓扑
+
+```text
+                    ┌─────────────────────┐
+                    │  Master（控制面）    │
+                    │  kube-apiserver 等   │
+                    │  + kubectl / Helm    │
+                    └──────────┬──────────┘
+               6443/tcp        │
+         ┌─────────────────────┼─────────────────────┐
+         ▼                     ▼                     ▼
+  ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+  │  Worker-1   │       │  Worker-2   │       │ （业务 Pod   │
+  │  kubelet    │       │  kubelet    │       │  调度到从节点）│
+  └─────────────┘       └─────────────┘       └─────────────┘
+```
+
+| 角色 | 数量 | 建议规格 | 脚本 |
+|---|---|---|---|
+| Master | 1 | ≥ 2C / 4G / 40G | `install-k8s.sh master` |
+| Worker | 2 | 各 ≥ 2C / 4G / 40G | `install-k8s.sh worker` |
+
+跑 Jenkins 动态 Agent 时，三台合计建议 **≥ 4C / 8G**；再上 GitLab Chart 建议更高。
+
+## 标准流程
+
+```text
+Master: install-k8s.sh master
+  → 生成 worker-join.sh，同步到两台 Worker
+Worker×2: install-k8s.sh worker
+  → Master: kubectl get nodes（3 个 Ready）
+  → check-cluster.sh → install-jenkins.sh
+```
+
+## 安装集群（一主两从）
+
+**环境**：三台 Ubuntu / Debian；主机名互不相同；互相能 ping；Master 对 Worker 开放 API。
+
+**防火墙放行（至少）**：`6443/tcp`、`10250/tcp`、`8472/udp`（Flannel VXLAN）、`30080/tcp`、`30443/tcp`。
+
+### 1. Master
+
+```bash
+cd deploy/04-k8s
+# 多网卡时请显式指定宣告 IP
+sudo APISERVER_ADVERTISE_ADDRESS=192.168.1.10 bash install-k8s.sh master
+```
+
+Master 会完成：关 swap → containerd → kubeadm init → Flannel → local-path 存储类 → Helm → ingress-nginx，并生成 **`worker-join.sh`**（含 join token，勿提交 Git）。
+
+### 2. 同步脚本到两台 Worker
+
+把整个 `deploy/04-k8s/`（必须含 `k8s-common.sh`、`worker-join.sh`、`install-k8s-worker.sh`）拷到两台从节点，例如：
+
+```bash
+scp -r deploy/04-k8s user@worker1:~/
+scp -r deploy/04-k8s user@worker2:~/
+```
+
+### 3. 两台 Worker 各执行一次
+
+```bash
+cd ~/04-k8s   # 或你的实际路径
+sudo bash install-k8s.sh worker
+```
+
+### 4. 回到 Master 验收
+
+```bash
+kubectl get nodes -o wide
+# 应看到 1 个 control-plane + 2 个 Ready 的 worker
+
+bash check-cluster.sh
+bash install-jenkins.sh
+```
+
+### 常用变量
+
+```bash
+# 钉 Kubernetes 小版本线 / deb 包版本
+sudo K8S_MAJOR_MINOR=1.31 K8S_PKG_VERSION=1.31.4-1.1 bash install-k8s.sh master
+
+# 不装 ingress-nginx
+sudo bash install-k8s.sh master --no-ingress
+
+# Token 过期后，在 Master 重新生成并覆盖 worker-join.sh：
+kubeadm token create --print-join-command
+# 或再跑一遍 master 脚本中的生成逻辑（集群已存在时会跳过 init 并刷新 join 脚本）
+```
+
+### 卸载
+
+在**要拆除的那台机器**上：
+
+```bash
+sudo bash uninstall-k8s.sh
+# Worker 卸完后到 Master: kubectl delete node <hostname>
+```
+
+只卸 Jenkins/GitLab、保留集群：
+
+```bash
+bash uninstall.sh jenkins    # 或 gitlab / all
+```
+
+> 已有云托管集群时可跳过本节，直接从 `check-cluster.sh` 开始。
+
+## 安装 Jenkins / GitLab
+
+```bash
+bash check-cluster.sh
+bash install-jenkins.sh
+# 资源充足再装 GitLab Chart（很重）
+bash install-gitlab.sh
+```
+
+取 Jenkins 初始密码：
+
+```bash
+kubectl -n jenkins get secret jenkins -o jsonpath='{.data.jenkins-admin-password}' | base64 -d; echo
+```
+
+暂未配域名时：
+
+```bash
+kubectl -n jenkins port-forward svc/jenkins 8080:8080
+# http://127.0.0.1:8080
+```
+
+Ingress：把 `values-jenkins.yaml` 中的 `ci.example.com` 写入 `/etc/hosts`，访问 `http://<任意节点IP>:30080`。
+
+## 文件
+
+| 文件 | 作用 |
+|---|---|
+| `install-k8s.sh` | 入口：`master` / `worker` |
+| `install-k8s-master.sh` | 安装控制面 + CNI + 存储类 + Helm + Ingress |
+| `install-k8s-worker.sh` | 工作节点加入集群 |
+| `k8s-common.sh` | 公共准备（containerd / kubeadm 包） |
+| `worker-join.sh` | **Master 生成**，含 join 命令（勿入库） |
+| `uninstall-k8s.sh` | 本机 `kubeadm reset` |
+| `check-cluster.sh` | 节点 / StorageClass / Ingress 检查 |
+| `install-jenkins.sh` / `install-gitlab.sh` | Helm 装应用 |
+| `values-*.yaml` / `namespaces.yaml` | Chart values / Namespace |
+| `uninstall.sh` | 卸载 Jenkins / GitLab Release |
+| `Jenkinsfile.k8s-agent.example` | 动态 Agent 示例 |
+
+## 验收建议
+
+1. `kubectl get nodes` 共 **3** 个节点且均为 Ready  
+2. `kubectl get sc` 能看到默认 `local-path`  
+3. `install-jenkins.sh` 成功，`port-forward` 能打开 UI  
+4. 跑通 `Jenkinsfile.k8s-agent.example`（Agent Pod 在 Worker 上创建后销毁）  

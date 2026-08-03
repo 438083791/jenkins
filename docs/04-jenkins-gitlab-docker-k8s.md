@@ -14,7 +14,9 @@
 | 相对方案三 | 从「单机 Compose」升级到「编排 + 调度 + 弹性」 |
 | **配置目录** | [`deploy/04-k8s/`](../deploy/04-k8s/) |
 
-本方案假设已具备：可用的 K8s 集群（1.28+）、默认 StorageClass、可配 Ingress Controller（如 ingress-nginx）、能申请 TLS（cert-manager 可选）。
+本方案需要：可用的 K8s 集群（1.28+）、默认 StorageClass、可配 Ingress Controller（如 ingress-nginx）、能申请 TLS（cert-manager 可选）。
+
+**没有集群时**：用 [`deploy/04-k8s/`](../deploy/04-k8s/) 的 kubeadm 脚本搭建 **一主两从**（1 Master + 2 Worker，含 Flannel、Helm、ingress-nginx、`local-path` 存储类）。说明见 [`deploy/04-k8s/README.md`](../deploy/04-k8s/README.md)。
 
 ---
 
@@ -65,22 +67,50 @@
 
 ---
 
-## 4. 集群前置检查
+## 4. 安装 / 检查集群
+
+### 4.1 一主两从（kubeadm，实验环境从零开始）
 
 ```bash
-kubectl version --short
+# --- Master ---
+cd deploy/04-k8s
+sudo APISERVER_ADVERTISE_ADDRESS=<MasterIP> bash install-k8s.sh master
+# 将本目录（含生成的 worker-join.sh）同步到两台 Worker
+
+# --- Worker × 2（每台各执行一次）---
+sudo bash install-k8s.sh worker
+
+# --- 回到 Master ---
+kubectl get nodes -o wide    # 应 3 个 Ready
+bash check-cluster.sh
+```
+
+| 项 | 说明 |
+|---|---|
+| 组件 | kubeadm + containerd + Flannel + local-path + Helm + ingress-nginx |
+| Ingress | HTTP NodePort `30080`，HTTPS `30443` |
+| 卸载节点 | 在该机执行 `sudo bash uninstall-k8s.sh` |
+| 已有托管集群 | 跳过安装，直接做前置检查 |
+
+### 4.2 集群前置检查
+
+```bash
+kubectl version --client
 kubectl get nodes
 kubectl get sc
 kubectl get ns
 kubectl -n ingress-nginx get pods   # 视实际 Ingress 命名空间而定
+# 或: bash deploy/04-k8s/check-cluster.sh
 ```
 
-最低实验规格（单节点学习集群）：
+最低实验规格（一主两从）：
 
 | 角色 | CPU | 内存 | 备注 |
 |---|---|---|---|
-| 仅 Jenkins + 动态 Agent | 4C | 8G | 可接受 |
-| Jenkins + 完整 GitLab Chart | 8C+ | 16G+ | 笔记本勉强，建议远端集群 |
+| Master ×1 | 2C | 4G | 控制面 |
+| Worker ×2 | 各 2C | 各 4G | 跑业务 / Agent Pod |
+| 仅 Jenkins + 动态 Agent | 合计约 4C+ / 8G+ | 可接受 |
+| Jenkins + 完整 GitLab Chart | 合计 8C+ / 16G+ | 建议远端多机 |
 
 ---
 
@@ -331,7 +361,7 @@ http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
 
 | 阶段 | 内容 | 退出标准 |
 |---|---|---|
-| K0 | 集群 + Ingress 就绪 | 域名能反代任意演示服务 |
+| K0 | `install-k8s.sh` 一主两从或自有集群 + Ingress 就绪 | 3 节点 Ready（或自有集群健康）；可反代演示服务 |
 | K1 | 仅 Helm 装 Jenkins | UI 可访问，PVC 正常 |
 | K2 | 一条 Kubernetes Agent Pipeline | Pod 创建并成功销毁 |
 | K3 | 对接外部或集群内 GitLab Webhook | Push 自动构建 |
