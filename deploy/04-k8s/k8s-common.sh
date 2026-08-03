@@ -10,8 +10,9 @@
 # pause / sandbox；默认跟 IMAGE_REPOSITORY 走
 : "${PAUSE_IMAGE:=${IMAGE_REPOSITORY}/pause:3.10}"
 
-# containerd 镜像加速（DaoCloud 公共镜像代理）；设 CONTAINERD_MIRROR=0 可关闭
+# containerd 镜像加速（DaoCloud）；registry.k8s.io 代理常 403，默认只加速 docker/ghcr/quay
 : "${CONTAINERD_MIRROR:=1}"
+: "${MIRROR_K8S_ENABLE:=0}"   # 设为 1 才加速 registry.k8s.io（DaoCloud 若 403 请保持 0）
 : "${MIRROR_K8S:=https://m.daocloud.io/registry.k8s.io}"
 : "${MIRROR_DOCKER:=https://docker.m.daocloud.io}"
 : "${MIRROR_GHCR:=https://ghcr.m.daocloud.io}"
@@ -53,18 +54,25 @@ k8s_write_registry_hosts() {
   local certs_d="/etc/containerd/certs.d"
   echo "==== 配置 containerd 镜像加速（DaoCloud / certs.d）===="
   mkdir -p \
-    "${certs_d}/registry.k8s.io" \
     "${certs_d}/docker.io" \
     "${certs_d}/ghcr.io" \
     "${certs_d}/quay.io"
 
-  cat >"${certs_d}/registry.k8s.io/hosts.toml" <<EOF
+  # registry.k8s.io：DaoCloud 对部分 tag（如 pause:3.10.1）会 403，默认不配代理
+  if [[ "${MIRROR_K8S_ENABLE}" == "1" ]]; then
+    mkdir -p "${certs_d}/registry.k8s.io"
+    cat >"${certs_d}/registry.k8s.io/hosts.toml" <<EOF
 server = "https://registry.k8s.io"
 
 [host."${MIRROR_K8S}"]
   capabilities = ["pull", "resolve"]
   override_path = true
 EOF
+    echo "registry.k8s.io -> ${MIRROR_K8S}"
+  else
+    rm -rf "${certs_d}/registry.k8s.io"
+    echo "registry.k8s.io 不走代理（MIRROR_K8S_ENABLE=0）；sandbox 请用阿里云 pause）"
+  fi
 
   cat >"${certs_d}/docker.io/hosts.toml" <<EOF
 server = "https://docker.io"
@@ -87,9 +95,31 @@ server = "https://quay.io"
   capabilities = ["pull", "resolve"]
 EOF
 
-  echo "registry.k8s.io -> ${MIRROR_K8S}"
   echo "docker.io       -> ${MIRROR_DOCKER}"
   echo "ghcr.io         -> ${MIRROR_GHCR}"
+}
+
+# 把阿里云（或 IMAGE_REPOSITORY）上的 pause 打成 containerd/kubelet 默认会要的官方名
+k8s_ensure_pause_aliases() {
+  local src="${PAUSE_IMAGE}"
+  echo "==== 确保 pause 可用: ${src} ===="
+  if command -v crictl >/dev/null 2>&1; then
+    crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock pull "${src}" 2>/dev/null || true
+  fi
+  if ! command -v ctr >/dev/null 2>&1; then
+    echo "无 ctr，跳过 pause 别名打标"
+    return 0
+  fi
+  # containerd 2.x 默认常要 pause:3.10.1；kubeadm 文档常见 3.10
+  local tag
+  for tag in \
+    registry.k8s.io/pause:3.10 \
+    registry.k8s.io/pause:3.10.1 \
+    registry.k8s.io/pause:3.9
+  do
+    ctr -n k8s.io images tag "${src}" "${tag}" 2>/dev/null || true
+  done
+  echo "已尝试将 ${src} 标记为 registry.k8s.io/pause:3.10 / 3.10.1"
 }
 
 # 生成兼容 containerd 1.x / 2.x 的 config.toml（Ubuntu 24.04 为 2.x）
@@ -108,17 +138,21 @@ k8s_write_containerd_config() {
     sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' "${cfg}"
   fi
 
-  # 仅替换已有 sandbox_image；没有则跳过（2.x 字段位置因版本而异，强行插入易写坏 TOML）
-  if grep -qE '^\s*sandbox_image\s*=' "${cfg}"; then
-    sed -i -E "s|^(\s*sandbox_image\s*=\s*).*$|\\1\"${PAUSE_IMAGE}\"|" "${cfg}"
+  # 强制所有 sandbox_image 行指向国内 pause（双引号 / 单引号都改）
+  if grep -qE 'sandbox_image\s*=' "${cfg}"; then
+    sed -i -E "s|sandbox_image\s*=\s*\"[^\"]*\"|sandbox_image = \"${PAUSE_IMAGE}\"|g" "${cfg}"
+    sed -i -E "s|sandbox_image\s*=\s*'[^']*'|sandbox_image = \"${PAUSE_IMAGE}\"|g" "${cfg}"
   else
-    echo "提示: 默认配置无 sandbox_image 字段，将依赖 kubeadm 拉取的 pause（${PAUSE_IMAGE}）"
+    echo "提示: 默认配置无 sandbox_image 字段，将依赖 pause 别名（${PAUSE_IMAGE}）"
   fi
 
-  # 把 config_path 指到 certs.d（空字符串或旧路径都改掉；没有则在文件末尾用 version 无关的顶层写法不安全，故只改已有行）
+  # 把 config_path 指到 certs.d
   if grep -qE '^\s*config_path\s*=' "${cfg}"; then
     sed -i -E 's|^(\s*config_path\s*=\s*).*$|\1"/etc/containerd/certs.d"|' "${cfg}"
   fi
+
+  echo "当前 sandbox_image 配置："
+  grep -E 'sandbox_image' "${cfg}" || true
 
   k8s_write_registry_hosts
 }
@@ -146,7 +180,7 @@ k8s_prepare_node() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y curl ca-certificates apt-transport-https gnupg lsb-release \
-    socat conntrack ipset nfs-common
+    socat conntrack ipset nfs-common cri-tools
 
   if swapon --show | grep -q .; then
     echo "关闭 swap..."
@@ -194,6 +228,12 @@ EOF
   apt-get install -y "${pkgs[@]}"
   apt-mark hold kubelet kubeadm kubectl
   systemctl enable --now kubelet
+
+  # Worker 加入前也需要 pause；Master 会在 images pull 后再打一次别名
+  if [[ "${role}" == "worker" ]]; then
+    crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock pull "${PAUSE_IMAGE}" 2>/dev/null || true
+    k8s_ensure_pause_aliases
+  fi
 }
 
 k8s_setup_kubeconfig() {

@@ -128,6 +128,68 @@ sudo IMAGE_REPOSITORY=registry.k8s.io \
   bash install-k8s.sh master
 ```
 
+### `wait-control-plane` / `context deadline exceeded`
+
+含义：kubeadm 已写证书和静态 Pod，但在超时时间内 **API Server 一直没起来**（常见是 kubelet / 控制面容器挂了）。
+
+在 Master 上立刻跑：
+
+```bash
+sudo bash diagnose-k8s-init.sh
+```
+
+或手工：
+
+```bash
+systemctl status kubelet --no-pager
+journalctl -xeu kubelet -n 80 --no-pager
+crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock ps -a | grep kube
+crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock images
+```
+
+常见原因与处理：
+
+| 现象 | 处理 |
+|---|---|
+| `pause:3.10.1` + `m.daocloud.io ... 403 Forbidden` | **当前根因**：sandbox 去拉官方 pause，DaoCloud 403。见下方「pause 403 急救」 |
+| 控制面容器 `Exited` / 一直 `Pending` | 多半镜像或 pause 有问题；`uninstall` 后重装 |
+| kubelet `inactive` / 报错连不上 containerd | `systemctl restart containerd kubelet` |
+| 虚拟机磁盘/CPU 很慢 | 加资源后重装 |
+| 仍有 swap | `swapoff -a` 并检查 `/etc/fstab` |
+
+**pause 403 急救（你已有阿里云 pause:3.10 时可先试，不必重装系统）：**
+
+```bash
+# 1) 去掉会 403 的 registry.k8s.io 代理
+sudo rm -rf /etc/containerd/certs.d/registry.k8s.io
+
+# 2) 把已有阿里云 pause 打成 kubelet 要的名字
+sudo ctr -n k8s.io images tag \
+  registry.aliyuncs.com/google_containers/pause:3.10 \
+  registry.k8s.io/pause:3.10.1
+sudo ctr -n k8s.io images tag \
+  registry.aliyuncs.com/google_containers/pause:3.10 \
+  registry.k8s.io/pause:3.10
+
+# 3) sandbox 指到阿里云（若配置里有该字段）
+sudo sed -i 's|sandbox_image = ".*"|sandbox_image = "registry.aliyuncs.com/google_containers/pause:3.10"|g' \
+  /etc/containerd/config.toml
+sudo systemctl restart containerd
+sudo systemctl restart kubelet
+
+# 4) 等 1～2 分钟看控制面是否起来
+sudo crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock ps -a | grep kube
+sudo ss -lntp | grep 6443 || true
+```
+
+若仍起不来，再完整重装（同步最新脚本后）：
+
+```bash
+sudo bash uninstall-k8s.sh
+sudo APISERVER_ADVERTISE_ADDRESS=192.168.122.165 bash install-k8s.sh master
+```
+| `pause:3.10.1` + DaoCloud `403 Forbidden` | **根因**：沙箱仍拉官方 pause，代理 403。控制面镜像其实已在阿里云。执行 `sudo bash fix-pause-sandbox.sh` |
+
 ### 卸载
 
 在**要拆除的那台机器**上：

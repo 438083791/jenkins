@@ -66,14 +66,55 @@ else
     echo "  sudo IMAGE_REPOSITORY=registry.k8s.io APISERVER_ADVERTISE_ADDRESS=${MASTER_IP} bash install-k8s.sh master" >&2
     exit 1
   fi
+  echo "已拉取镜像："
+  crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock images 2>/dev/null \
+    | grep -E 'kube-|etcd|pause|coredns|IMAGE' || true
+
+  # containerd 默认要 registry.k8s.io/pause:3.10.1；用已拉取的阿里云 pause 打别名，避免 DaoCloud 403
+  k8s_ensure_pause_aliases
 
   echo
-  echo "==== [master] kubeadm init (advertise=${MASTER_IP}, podCIDR=${POD_CIDR}) ===="
-  kubeadm init \
-    --apiserver-advertise-address="${MASTER_IP}" \
-    --pod-network-cidr="${POD_CIDR}" \
-    --image-repository="${IMAGE_REPOSITORY}" \
-    --upload-certs
+  echo "==== [master] 写入 kubeadm 配置并 init ===="
+  KUBEADM_CFG="$(mktemp /tmp/kubeadm-init.XXXXXX.yaml)"
+  # v1beta3 兼容 1.31；加长控制面就绪等待（默认约 4m，弱机/慢盘易超时）
+  cat >"${KUBEADM_CFG}" <<EOF
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: ${MASTER_IP}
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///var/run/containerd/containerd.sock
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: stable-${K8S_MAJOR_MINOR}
+imageRepository: ${IMAGE_REPOSITORY}
+networking:
+  podSubnet: ${POD_CIDR}
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+EOF
+
+  set +e
+  kubeadm init --config="${KUBEADM_CFG}" --upload-certs --v=5
+  INIT_RC=$?
+  set -e
+  rm -f "${KUBEADM_CFG}"
+
+  if [[ "${INIT_RC}" -ne 0 ]]; then
+    echo >&2
+    echo "==== kubeadm init 失败，自动诊断 ====" >&2
+    bash "${SCRIPT_DIR}/diagnose-k8s-init.sh" || true
+    echo >&2
+    echo "处理建议：" >&2
+    echo "  1) 看上面 crictl/kubelet 是否在拉镜像失败或 CrashLoop" >&2
+    echo "  2) sudo bash uninstall-k8s.sh 后重试" >&2
+    echo "  3) 若镜像站不稳定: sudo IMAGE_REPOSITORY=registry.k8s.io APISERVER_ADVERTISE_ADDRESS=${MASTER_IP} bash install-k8s.sh master" >&2
+    exit "${INIT_RC}"
+  fi
 
   k8s_setup_kubeconfig /etc/kubernetes/admin.conf
 
