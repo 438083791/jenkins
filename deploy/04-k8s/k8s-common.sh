@@ -18,6 +18,10 @@
 : "${MIRROR_GHCR:=https://ghcr.m.daocloud.io}"
 : "${MIRROR_QUAY:=https://quay.m.daocloud.io}"
 
+# Helm 二进制（避免 raw.githubusercontent.com）
+: "${HELM_VERSION:=v3.16.4}"
+: "${HELM_TGZ_URLS:=https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz https://mirrors.huaweicloud.com/helm/${HELM_VERSION}/helm-${HELM_VERSION}-linux-amd64.tar.gz}"
+
 k8s_require_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
     echo "请使用 root 或 sudo 运行" >&2
@@ -267,4 +271,32 @@ k8s_detect_primary_ip() {
     ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   fi
   echo "${ip}"
+}
+
+# 不依赖 GitHub raw 脚本安装 Helm
+k8s_install_helm() {
+  if k8s_need_cmd helm; then
+    echo "Helm 已存在: $(helm version --short 2>/dev/null || true)"
+    return 0
+  fi
+
+  local url tgz="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+  local ok=0
+  for url in ${HELM_TGZ_URLS}; do
+    echo "下载 Helm: ${url}"
+    if curl -fL --connect-timeout 15 --max-time 180 "${url}" -o "${tgz}"; then
+      ok=1
+      break
+    fi
+    echo "下载失败，尝试下一个源..."
+  done
+  if [[ "${ok}" != "1" ]]; then
+    echo "Helm 下载失败（多源均不可用）。可稍后手动安装，或设 INSTALL_HELM=0 跳过。" >&2
+    return 1
+  fi
+
+  tar -xzf "${tgz}" -C /tmp
+  install -m 755 /tmp/linux-amd64/helm /usr/local/bin/helm
+  rm -rf /tmp/linux-amd64 "${tgz}"
+  helm version --short
 }

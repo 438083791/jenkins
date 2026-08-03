@@ -239,7 +239,8 @@ Ingress：把 `values-jenkins.yaml` 中的 `ci.example.com` 写入 `/etc/hosts`�
 | `install-k8s-master.sh` | 安装控制面 + CNI + 存储类 + Helm + Ingress |
 | `install-k8s-worker.sh` | 工作节点加入集群 |
 | `k8s-common.sh` | 公共准备（containerd / kubeadm 包） |
-| `worker-join.sh` | **Master 生成**，含 join 命令（勿入库） |
+| `manifests/kube-flannel.yml` | 本地 Flannel（不依赖 GitHub；镜像走 DaoCloud） |
+| `manifests/local-path-storage.yaml` | 本地 local-path 存储类 |
 | `uninstall-k8s.sh` | 本机 `kubeadm reset` |
 | `check-cluster.sh` | 节点 / StorageClass / Ingress 检查 |
 | `install-jenkins.sh` / `install-gitlab.sh` | Helm 装应用 |

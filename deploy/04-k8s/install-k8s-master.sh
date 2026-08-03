@@ -16,8 +16,11 @@ WITH_INGRESS=1
 INSTALL_HELM="${INSTALL_HELM:-1}"
 POD_CIDR="${POD_CIDR:-10.244.0.0/16}"
 JOIN_SCRIPT="${SCRIPT_DIR}/worker-join.sh"
-FLANNEL_URL="${FLANNEL_URL:-https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml}"
-LOCAL_PATH_URL="${LOCAL_PATH_URL:-https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml}"
+FLANNEL_MANIFEST="${SCRIPT_DIR}/manifests/kube-flannel.yml"
+LOCAL_PATH_MANIFEST="${SCRIPT_DIR}/manifests/local-path-storage.yaml"
+# 兼容旧环境变量：若仍指定 URL 则优先 URL（不推荐，国内常连不上 GitHub）
+FLANNEL_URL="${FLANNEL_URL:-}"
+LOCAL_PATH_URL="${LOCAL_PATH_URL:-}"
 
 for arg in "$@"; do
   case "${arg}" in
@@ -76,7 +79,7 @@ else
   echo
   echo "==== [master] 写入 kubeadm 配置并 init ===="
   KUBEADM_CFG="$(mktemp /tmp/kubeadm-init.XXXXXX.yaml)"
-  # v1beta3 兼容 1.31；加长控制面就绪等待（默认约 4m，弱机/慢盘易超时）
+  # v1beta3 兼容 1.31
   cat >"${KUBEADM_CFG}" <<EOF
 apiVersion: kubeadm.k8s.io/v1beta3
 kind: InitConfiguration
@@ -117,34 +120,47 @@ EOF
   fi
 
   k8s_setup_kubeconfig /etc/kubernetes/admin.conf
-
-  echo
-  echo "==== [master] 安装 CNI（Flannel）===="
-  kubectl apply -f "${FLANNEL_URL}"
-
-  echo "等待控制面节点 Ready..."
-  for i in $(seq 1 90); do
-    if kubectl get nodes --no-headers 2>/dev/null | grep -q Ready; then
-      break
-    fi
-    sleep 2
-    if [[ "${i}" -eq 90 ]]; then
-      echo "节点长时间未 Ready，请检查: kubectl get pods -n kube-flannel -o wide" >&2
-      kubectl get nodes -o wide || true
-      kubectl get pods -A || true
-      exit 1
-    fi
-  done
-
-  echo
-  echo "==== [master] 安装 local-path StorageClass（Jenkins PVC）===="
-  kubectl apply -f "${LOCAL_PATH_URL}"
-  # 设为默认存储类
-  kubectl annotate storageclass local-path \
-    storageclass.kubernetes.io/is-default-class=true --overwrite || true
 fi
 
 export KUBECONFIG=/root/.kube/config
+
+echo
+echo "==== [master] 安装 CNI（Flannel，本地清单，不依赖 GitHub）===="
+if [[ -n "${FLANNEL_URL}" ]]; then
+  kubectl apply -f "${FLANNEL_URL}"
+elif [[ -f "${FLANNEL_MANIFEST}" ]]; then
+  kubectl apply -f "${FLANNEL_MANIFEST}"
+else
+  echo "未找到 Flannel 清单: ${FLANNEL_MANIFEST}" >&2
+  exit 1
+fi
+
+echo "等待节点 Ready..."
+for i in $(seq 1 90); do
+  if kubectl get nodes --no-headers 2>/dev/null | grep -q Ready; then
+    break
+  fi
+  sleep 2
+  if [[ "${i}" -eq 90 ]]; then
+    echo "节点长时间未 Ready，请检查: kubectl get pods -n kube-flannel -o wide" >&2
+    kubectl get nodes -o wide || true
+    kubectl get pods -A || true
+    exit 1
+  fi
+done
+
+echo
+echo "==== [master] 安装 local-path StorageClass（Jenkins PVC）===="
+if [[ -n "${LOCAL_PATH_URL}" ]]; then
+  kubectl apply -f "${LOCAL_PATH_URL}"
+elif [[ -f "${LOCAL_PATH_MANIFEST}" ]]; then
+  kubectl apply -f "${LOCAL_PATH_MANIFEST}"
+else
+  echo "未找到 local-path 清单: ${LOCAL_PATH_MANIFEST}" >&2
+  exit 1
+fi
+kubectl annotate storageclass local-path \
+  storageclass.kubernetes.io/is-default-class=true --overwrite || true
 
 echo
 echo "==== [master] 生成 Worker 加入脚本 ===="
@@ -173,33 +189,43 @@ echo "  kubeadm token create --print-join-command"
 
 if [[ "${INSTALL_HELM}" == "1" ]]; then
   echo
-  echo "==== [master] 安装 Helm ===="
-  if k8s_need_cmd helm; then
-    echo "Helm 已存在: $(helm version --short 2>/dev/null || true)"
-  else
-    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-  fi
-  helm version --short
+  echo "==== [master] 安装 Helm（get.helm.sh / 华为云，不走 GitHub raw）===="
+  k8s_install_helm || echo "Helm 未装上，将跳过依赖 Helm 的步骤；可用本地清单装 Ingress"
 fi
 
 if [[ "${WITH_INGRESS}" == "1" ]]; then
   echo
   echo "==== [master] 安装 ingress-nginx ===="
-  if ! k8s_need_cmd helm; then
-    echo "未找到 helm，无法安装 ingress-nginx。请设置 INSTALL_HELM=1 重试。" >&2
-    exit 1
+  INGRESS_MANIFEST="${SCRIPT_DIR}/manifests/ingress-nginx-nodeport.yaml"
+  INGRESS_OK=0
+  if k8s_need_cmd helm; then
+    if helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null \
+      && helm repo update 2>/dev/null \
+      && helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+        --namespace ingress-nginx \
+        --create-namespace \
+        --set controller.service.type=NodePort \
+        --set controller.service.nodePorts.http=30080 \
+        --set controller.service.nodePorts.https=30443 \
+        --set controller.image.registry=m.daocloud.io/registry.k8s.io \
+        --wait --timeout 10m; then
+      INGRESS_OK=1
+    else
+      echo "Helm 安装 ingress-nginx 失败，回退到本地清单..."
+    fi
   fi
-  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-  helm repo update
-  helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-    --namespace ingress-nginx \
-    --create-namespace \
-    --set controller.service.type=NodePort \
-    --set controller.service.nodePorts.http=30080 \
-    --set controller.service.nodePorts.https=30443 \
-    --wait --timeout 10m
-  echo "Ingress HTTP NodePort : 30080"
-  echo "Ingress HTTPS NodePort: 30443"
+  if [[ "${INGRESS_OK}" != "1" ]]; then
+    if [[ -f "${INGRESS_MANIFEST}" ]]; then
+      kubectl apply -f "${INGRESS_MANIFEST}"
+      INGRESS_OK=1
+    else
+      echo "未找到 Ingress 清单且 Helm 不可用，跳过 Ingress" >&2
+    fi
+  fi
+  if [[ "${INGRESS_OK}" == "1" ]]; then
+    echo "Ingress HTTP NodePort : 30080"
+    echo "Ingress HTTPS NodePort: 30443"
+  fi
 fi
 
 echo
