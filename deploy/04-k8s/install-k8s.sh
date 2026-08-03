@@ -14,6 +14,8 @@
 #   K8S_MAJOR_MINOR             默认 1.31
 #   K8S_PKG_VERSION             钉死 deb 版本，如 1.31.4-1.1
 #   POD_CIDR                    默认 10.244.0.0/16（Flannel）
+#   IMAGE_REPOSITORY            默认 registry.aliyuncs.com/google_containers（国内）
+#   CONTAINERD_MIRROR           默认 1，DaoCloud 加速 registry.k8s.io/docker.io 等
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

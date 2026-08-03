@@ -89,9 +89,42 @@ sudo K8S_MAJOR_MINOR=1.31 K8S_PKG_VERSION=1.31.4-1.1 bash install-k8s.sh master
 # 不装 ingress-nginx
 sudo bash install-k8s.sh master --no-ingress
 
+# 镜像仓库（国内默认已是阿里云 google_containers）
+# sudo IMAGE_REPOSITORY=registry.aliyuncs.com/google_containers bash install-k8s.sh master
+# 可直连或走 DaoCloud 代理时：
+# sudo IMAGE_REPOSITORY=registry.k8s.io bash install-k8s.sh master
+# 关闭 containerd 加速：CONTAINERD_MIRROR=0
+
 # Token 过期后，在 Master 重新生成并覆盖 worker-join.sh：
 kubeadm token create --print-join-command
 # 或再跑一遍 master 脚本中的生成逻辑（集群已存在时会跳过 init 并刷新 join 脚本）
+```
+
+### 安装时常见日志 / 报错
+
+| 日志 | 含义 |
+|---|---|
+| `remote version is much newer ... stable-1.31` | 正常：脚本钉在 1.31 线 |
+| `Pulling images required...` | 正在拉控制面镜像 |
+| `sandbox image "" ... inconsistent` | pause 未配置；新脚本已写入 |
+| `dial tcp ...pkg.dev:443: connection refused` | **国内无法直连 registry.k8s.io**；请用下方「带镜像源重装」 |
+
+**带国内镜像源重装（你当前的报错就走这个）：**
+
+```bash
+# 1. 把本仓库最新 deploy/04-k8s 同步到 Master
+# 2. 清理失败残留后重装（默认已用阿里云镜像仓库 + DaoCloud 加速）
+sudo bash uninstall-k8s.sh
+sudo APISERVER_ADVERTISE_ADDRESS=192.168.122.136 bash install-k8s.sh master
+```
+
+若阿里云缺某个 tag，可改走官方名 + DaoCloud：
+
+```bash
+sudo bash uninstall-k8s.sh
+sudo IMAGE_REPOSITORY=registry.k8s.io \
+  APISERVER_ADVERTISE_ADDRESS=192.168.122.136 \
+  bash install-k8s.sh master
 ```
 
 ### 卸载

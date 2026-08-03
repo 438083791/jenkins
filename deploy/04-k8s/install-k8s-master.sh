@@ -51,10 +51,28 @@ else
   k8s_prepare_node "master"
 
   echo
+  echo "==== [master] 预拉取控制面镜像 ===="
+  echo "imageRepository: ${IMAGE_REPOSITORY}"
+  echo "若仍失败：检查本机能否访问镜像站，或改 IMAGE_REPOSITORY / 镜像加速变量"
+  if ! kubeadm config images pull --image-repository="${IMAGE_REPOSITORY}"; then
+    echo >&2
+    echo "镜像拉取失败。当前环境多半无法直连 registry.k8s.io（*.pkg.dev）。" >&2
+    echo "脚本默认已用: IMAGE_REPOSITORY=${IMAGE_REPOSITORY}" >&2
+    echo "可重试：" >&2
+    echo "  sudo bash uninstall-k8s.sh" >&2
+    echo "  # 方案 A：继续阿里云（默认）" >&2
+    echo "  sudo APISERVER_ADVERTISE_ADDRESS=${MASTER_IP} bash install-k8s.sh master" >&2
+    echo "  # 方案 B：官方名 + DaoCloud 代理" >&2
+    echo "  sudo IMAGE_REPOSITORY=registry.k8s.io APISERVER_ADVERTISE_ADDRESS=${MASTER_IP} bash install-k8s.sh master" >&2
+    exit 1
+  fi
+
+  echo
   echo "==== [master] kubeadm init (advertise=${MASTER_IP}, podCIDR=${POD_CIDR}) ===="
   kubeadm init \
     --apiserver-advertise-address="${MASTER_IP}" \
     --pod-network-cidr="${POD_CIDR}" \
+    --image-repository="${IMAGE_REPOSITORY}" \
     --upload-certs
 
   k8s_setup_kubeconfig /etc/kubernetes/admin.conf

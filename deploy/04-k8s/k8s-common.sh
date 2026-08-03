@@ -5,6 +5,18 @@
 : "${K8S_MAJOR_MINOR:=1.31}"
 : "${K8S_PKG_VERSION:=}"   # 空 = 仓库最新 1.31.x；可钉如 1.31.4-1.1
 
+# 控制面镜像仓库（国内默认阿里云；可直连官方时设 IMAGE_REPOSITORY=registry.k8s.io）
+: "${IMAGE_REPOSITORY:=registry.aliyuncs.com/google_containers}"
+# pause / sandbox；默认跟 IMAGE_REPOSITORY 走
+: "${PAUSE_IMAGE:=${IMAGE_REPOSITORY}/pause:3.10}"
+
+# containerd 镜像加速（DaoCloud 公共镜像代理）；设 CONTAINERD_MIRROR=0 可关闭
+: "${CONTAINERD_MIRROR:=1}"
+: "${MIRROR_K8S:=https://m.daocloud.io/registry.k8s.io}"
+: "${MIRROR_DOCKER:=https://docker.m.daocloud.io}"
+: "${MIRROR_GHCR:=https://ghcr.m.daocloud.io}"
+: "${MIRROR_QUAY:=https://quay.m.daocloud.io}"
+
 k8s_require_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
     echo "请使用 root 或 sudo 运行" >&2
@@ -29,6 +41,72 @@ k8s_detect_os() {
 
 k8s_need_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+# 写入 containerd certs.d 镜像加速，避免直连 registry.k8s.io / docker.io 被拒
+k8s_configure_registry_mirrors() {
+  if [[ "${CONTAINERD_MIRROR}" != "1" ]]; then
+    echo "已跳过 containerd 镜像加速（CONTAINERD_MIRROR=${CONTAINERD_MIRROR}）"
+    return 0
+  fi
+
+  local certs_d="/etc/containerd/certs.d"
+  echo "==== 配置 containerd 镜像加速（DaoCloud）===="
+  mkdir -p \
+    "${certs_d}/registry.k8s.io" \
+    "${certs_d}/docker.io" \
+    "${certs_d}/ghcr.io" \
+    "${certs_d}/quay.io"
+
+  cat >"${certs_d}/registry.k8s.io/hosts.toml" <<EOF
+server = "https://registry.k8s.io"
+
+[host."${MIRROR_K8S}"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+EOF
+
+  cat >"${certs_d}/docker.io/hosts.toml" <<EOF
+server = "https://docker.io"
+
+[host."${MIRROR_DOCKER}"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+  cat >"${certs_d}/ghcr.io/hosts.toml" <<EOF
+server = "https://ghcr.io"
+
+[host."${MIRROR_GHCR}"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+  cat >"${certs_d}/quay.io/hosts.toml" <<EOF
+server = "https://quay.io"
+
+[host."${MIRROR_QUAY}"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+  # 确保 CRI 使用 certs.d（覆盖部分发行版空配置 / 旧 mirrors 字段）
+  if grep -qE '^\s*config_path\s*=' /etc/containerd/config.toml; then
+    sed -i -E 's|^(\s*config_path\s*=\s*).*|\\1"/etc/containerd/certs.d"|' /etc/containerd/config.toml
+  else
+    # 在 registry 段补 config_path；若无 registry 段则追加
+    if grep -q 'io.containerd.grpc.v1.cri".registry' /etc/containerd/config.toml \
+      || grep -q 'io.containerd.grpc.v1.cri\]\.registry' /etc/containerd/config.toml; then
+      sed -i '/io.containerd.grpc.v1.cri.*registry/a\      config_path = "/etc/containerd/certs.d"' /etc/containerd/config.toml
+    else
+      cat >>/etc/containerd/config.toml <<'EOF'
+
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "/etc/containerd/certs.d"
+EOF
+    fi
+  fi
+
+  echo "registry.k8s.io -> ${MIRROR_K8S}"
+  echo "docker.io       -> ${MIRROR_DOCKER}"
+  echo "ghcr.io         -> ${MIRROR_GHCR}"
 }
 
 # 系统内核参数、关 swap、装基础包、containerd、kubeadm/kubelet/kubectl
@@ -67,8 +145,18 @@ EOF
   containerd config default >/etc/containerd/config.toml
   # kubeadm 要求使用 systemd cgroup 驱动
   sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+  # 消除 sandbox image 空值警告；与 kubeadm / IMAGE_REPOSITORY 对齐
+  if grep -qE '^\s*sandbox_image\s*=' /etc/containerd/config.toml; then
+    sed -i -E "s|^(\s*sandbox_image\s*=\s*).*|\\1\"${PAUSE_IMAGE}\"|" /etc/containerd/config.toml
+  else
+    sed -i "/io.containerd.grpc.v1.cri/a\\  sandbox_image = \"${PAUSE_IMAGE}\"" /etc/containerd/config.toml
+  fi
+
+  k8s_configure_registry_mirrors
+
   systemctl enable --now containerd
   systemctl restart containerd
+  echo "containerd sandbox_image -> ${PAUSE_IMAGE}"
 
   echo "==== [${role}] 安装 kubeadm / kubelet / kubectl (v${K8S_MAJOR_MINOR}) ===="
   install -d -m 755 /etc/apt/keyrings
