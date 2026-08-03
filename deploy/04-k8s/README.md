@@ -108,6 +108,7 @@ kubeadm token create --print-join-command
 | `Pulling images required...` | 正在拉控制面镜像 |
 | `sandbox image "" ... inconsistent` | pause 未配置；新脚本已写入 |
 | `dial tcp ...pkg.dev:443: connection refused` | **国内无法直连 registry.k8s.io**；请用下方「带镜像源重装」 |
+| `Job for containerd.service failed` | 多为写坏了 `config.toml`（Ubuntu 24.04 是 containerd 2.x）。同步最新脚本后重装；或先 `containerd config default \| sudo tee /etc/containerd/config.toml && sudo systemctl restart containerd` |
 
 **带国内镜像源重装（你当前的报错就走这个）：**
 

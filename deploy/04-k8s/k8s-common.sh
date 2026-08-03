@@ -43,15 +43,15 @@ k8s_need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# 写入 containerd certs.d 镜像加速，避免直连 registry.k8s.io / docker.io 被拒
-k8s_configure_registry_mirrors() {
+# 仅写 certs.d（不往 config.toml 追加已废弃的 v1.cri.registry 段，避免 containerd 2.x 起不来）
+k8s_write_registry_hosts() {
   if [[ "${CONTAINERD_MIRROR}" != "1" ]]; then
     echo "已跳过 containerd 镜像加速（CONTAINERD_MIRROR=${CONTAINERD_MIRROR}）"
     return 0
   fi
 
   local certs_d="/etc/containerd/certs.d"
-  echo "==== 配置 containerd 镜像加速（DaoCloud）===="
+  echo "==== 配置 containerd 镜像加速（DaoCloud / certs.d）===="
   mkdir -p \
     "${certs_d}/registry.k8s.io" \
     "${certs_d}/docker.io" \
@@ -87,26 +87,56 @@ server = "https://quay.io"
   capabilities = ["pull", "resolve"]
 EOF
 
-  # 确保 CRI 使用 certs.d（覆盖部分发行版空配置 / 旧 mirrors 字段）
-  if grep -qE '^\s*config_path\s*=' /etc/containerd/config.toml; then
-    sed -i -E 's|^(\s*config_path\s*=\s*).*|\\1"/etc/containerd/certs.d"|' /etc/containerd/config.toml
-  else
-    # 在 registry 段补 config_path；若无 registry 段则追加
-    if grep -q 'io.containerd.grpc.v1.cri".registry' /etc/containerd/config.toml \
-      || grep -q 'io.containerd.grpc.v1.cri\]\.registry' /etc/containerd/config.toml; then
-      sed -i '/io.containerd.grpc.v1.cri.*registry/a\      config_path = "/etc/containerd/certs.d"' /etc/containerd/config.toml
-    else
-      cat >>/etc/containerd/config.toml <<'EOF'
-
-[plugins."io.containerd.grpc.v1.cri".registry]
-  config_path = "/etc/containerd/certs.d"
-EOF
-    fi
-  fi
-
   echo "registry.k8s.io -> ${MIRROR_K8S}"
   echo "docker.io       -> ${MIRROR_DOCKER}"
   echo "ghcr.io         -> ${MIRROR_GHCR}"
+}
+
+# 生成兼容 containerd 1.x / 2.x 的 config.toml（Ubuntu 24.04 为 2.x）
+k8s_write_containerd_config() {
+  local cfg="/etc/containerd/config.toml"
+  mkdir -p /etc/containerd
+  if [[ -f "${cfg}" ]]; then
+    cp -f "${cfg}" "${cfg}.bak.$(date +%s)" || true
+  fi
+
+  # 先出默认配置，再做最小替换（不要 insert/append 旧版 plugin 段）
+  containerd config default >"${cfg}"
+
+  # kubeadm / kubelet 使用 systemd cgroup
+  if grep -q 'SystemdCgroup = false' "${cfg}"; then
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' "${cfg}"
+  fi
+
+  # 仅替换已有 sandbox_image；没有则跳过（2.x 字段位置因版本而异，强行插入易写坏 TOML）
+  if grep -qE '^\s*sandbox_image\s*=' "${cfg}"; then
+    sed -i -E "s|^(\s*sandbox_image\s*=\s*).*$|\\1\"${PAUSE_IMAGE}\"|" "${cfg}"
+  else
+    echo "提示: 默认配置无 sandbox_image 字段，将依赖 kubeadm 拉取的 pause（${PAUSE_IMAGE}）"
+  fi
+
+  # 把 config_path 指到 certs.d（空字符串或旧路径都改掉；没有则在文件末尾用 version 无关的顶层写法不安全，故只改已有行）
+  if grep -qE '^\s*config_path\s*=' "${cfg}"; then
+    sed -i -E 's|^(\s*config_path\s*=\s*).*$|\1"/etc/containerd/certs.d"|' "${cfg}"
+  fi
+
+  k8s_write_registry_hosts
+}
+
+k8s_restart_containerd() {
+  systemctl enable containerd >/dev/null 2>&1 || true
+  if ! systemctl restart containerd; then
+    echo "containerd 启动失败，最近日志：" >&2
+    journalctl -u containerd -n 40 --no-pager >&2 || true
+    echo >&2
+    echo "可尝试恢复默认配置后排查：" >&2
+    echo "  containerd config default | sudo tee /etc/containerd/config.toml" >&2
+    echo "  sudo systemctl restart containerd" >&2
+    echo "  journalctl -u containerd -e" >&2
+    exit 1
+  fi
+  systemctl is-active --quiet containerd
+  echo "containerd 已运行；sandbox_image 目标 -> ${PAUSE_IMAGE}"
 }
 
 # 系统内核参数、关 swap、装基础包、containerd、kubeadm/kubelet/kubectl
@@ -139,24 +169,11 @@ net.ipv4.ip_forward                 = 1
 EOF
   sysctl --system >/dev/null
 
-  echo "==== [${role}] 安装 containerd ===="
+  echo "==== [${role}] 安装 / 配置 containerd ===="
+  # Ubuntu 24.04 自带 containerd 2.x；保持发行版包，避免与 Docker 源混用
   apt-get install -y containerd
-  mkdir -p /etc/containerd
-  containerd config default >/etc/containerd/config.toml
-  # kubeadm 要求使用 systemd cgroup 驱动
-  sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-  # 消除 sandbox image 空值警告；与 kubeadm / IMAGE_REPOSITORY 对齐
-  if grep -qE '^\s*sandbox_image\s*=' /etc/containerd/config.toml; then
-    sed -i -E "s|^(\s*sandbox_image\s*=\s*).*|\\1\"${PAUSE_IMAGE}\"|" /etc/containerd/config.toml
-  else
-    sed -i "/io.containerd.grpc.v1.cri/a\\  sandbox_image = \"${PAUSE_IMAGE}\"" /etc/containerd/config.toml
-  fi
-
-  k8s_configure_registry_mirrors
-
-  systemctl enable --now containerd
-  systemctl restart containerd
-  echo "containerd sandbox_image -> ${PAUSE_IMAGE}"
+  k8s_write_containerd_config
+  k8s_restart_containerd
 
   echo "==== [${role}] 安装 kubeadm / kubelet / kubectl (v${K8S_MAJOR_MINOR}) ===="
   install -d -m 755 /etc/apt/keyrings
